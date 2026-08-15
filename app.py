@@ -872,7 +872,7 @@ elif menu == "5. Planning Hebdomadaire":
 
     # Modale 1 : Demande de renouvellement par Email
     @st.dialog("📩 Fiche de renouvellement par Email")
-    def ouvrir_dialogue_renouvellement(o, jours_restants):
+    def ouvrir_dialogue_renouvellement(o, jours_restants, key_cmd):
         st.markdown(f"### Patient : **{o['patient']}**")
         st.write(f"**Établissement / Praticien :** {o['hopital']}")
         st.write(f"**Traitement à renouveler :** {o['molecule']}")
@@ -894,11 +894,24 @@ elif menu == "5. Planning Hebdomadaire":
                 jours_restants,
                 o["date_fin"],
             )
-            st.link_button(
-                "🚀 Ouvrir Outlook / Mail pour envoyer",
+
+            # Clic sur le bouton d'ouverture d'e-mail -> enregistre le statut et ferme/rafraîchit la vue
+            if st.link_button(
+                "🚀 Envoyer l'e-mail de renouvellement",
                 mailto_url,
                 use_container_width=True,
-            )
+            ):
+                st.session_state.renouvellements_faits[key_cmd] = True
+                st.toast("Demande transmise ! La fiche est retirée du planning.")
+                st.rerun()
+
+            if st.button(
+                "Mark comme envoyé / Retirer du planning",
+                use_container_width=True,
+            ):
+                st.session_state.renouvellements_faits[key_cmd] = True
+                st.toast("Demande effectuée et fiche retirée.")
+                st.rerun()
         else:
             st.error(
                 "⚠️ Aucune adresse e-mail renseignée pour cet établissement dans l'annuaire."
@@ -908,7 +921,7 @@ elif menu == "5. Planning Hebdomadaire":
             )
 
     # Modale 2 : Dépôt du fichier de reconduction
-    @st.dialog("📁 Reconduction Ordonnance - Dépôt de fichier")
+    @st.dialog("📁 Nouvelle ordonnance - reconduction")
     def ouvrir_dialogue_reconduction(o):
         st.markdown(f"### Reconduction pour : **{o['patient']}**")
         st.write(f"**Traitement :** {o['molecule']}")
@@ -994,71 +1007,56 @@ elif menu == "5. Planning Hebdomadaire":
                 if date_commande == jour_date:
                     commandes_du_jour.append(o)
 
-            if not commandes_du_jour:
+            # Filtrage pour retirer les commandes dont l'e-mail / la demande a déjà été transmise
+            commandes_a_afficher = []
+            for o in commandes_du_jour:
+                key_cmd = f"cmd_{o['patient']}_{o['molecule']}_{o['date_fin'].strftime('%Y%m%d')}"
+                if not st.session_state.renouvellements_faits.get(
+                    key_cmd, False
+                ):
+                    commandes_a_afficher.append((o, key_cmd))
+
+            if not commandes_a_afficher:
                 st.caption("<em>Aucune commande</em>", unsafe_allow_html=True)
             else:
-                for idx_c, o in enumerate(commandes_du_jour):
-                    key_cmd = f"cmd_{o['patient']}_{o['molecule']}_{o['date_fin'].strftime('%Y%m%d')}"
+                for idx_c, (o, key_cmd) in enumerate(commandes_a_afficher):
                     jours_restants = (o["date_fin"] - aujourdhui_real).days
 
                     # --- 1. AFFICHAGE DE LA FICHE PATIENT DU PLANNING ---
-                    est_fait = st.session_state.renouvellements_faits.get(
-                        key_cmd, False
+                    st.markdown(
+                        f"""
+                        <div style="border-left: 4px solid #d9534f; background-color: #fff0f0; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 12px; margin-bottom: 8px;">
+                            <strong style="color: #d9534f;">🛒 ROULEMENT À PASSER</strong><br>
+                            👤 <strong>{o['patient']}</strong><br>
+                            🏥 <small>{o['hopital']}</small><br>
+                            💊 {o['molecule']}<br>
+                            📅 Fin tt: <strong>{o['date_fin'].strftime('%d/%m/%Y')}</strong>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
                     )
 
-                    if est_fait:
-                        st.markdown(
-                            f"""
-                            <div style="border-left: 4px solid #888; background-color: #e8e8e8; padding: 8px; border-radius: 6px; font-size: 12px; color: #666; margin-bottom: 8px;">
-                                <strong>✔️ {o['patient']}</strong><br>
-                                🏥 <small>{o['hopital']}</small><br>
-                                💊 {o['molecule']}<br>
-                                📅 Fin: {o['date_fin'].strftime('%d/%m/%Y')}
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            f"""
-                            <div style="border-left: 4px solid #d9534f; background-color: #fff0f0; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 12px; margin-bottom: 8px;">
-                                <strong style="color: #d9534f;">🛒 ROULEMENT À PASSER</strong><br>
-                                👤 <strong>{o['patient']}</strong><br>
-                                🏥 <small>{o['hopital']}</small><br>
-                                💊 {o['molecule']}<br>
-                                📅 Fin tt: <strong>{o['date_fin'].strftime('%d/%m/%Y')}</strong>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-
-                    # --- 2. BOUTONS POSITIONNÉS DIRECTEMENT EN DESSOUS DE LA FICHE ---
-                    # Bouton 1 : Demande de renouvellement
+                    # --- 2. BOUTONS MODIFIÉS SOUS LA FICHE ---
+                    # Bouton 1 : Renouveler auprès établissement de santé
                     if st.button(
-                        "📩 Renouveler",
+                        "📩 Renouveler auprès établissement de santé",
                         key=f"btn_renouv_{key_cmd}_{i}",
                         use_container_width=True,
                         type="secondary",
                     ):
-                        ouvrir_dialogue_renouvellement(o, jours_restants)
+                        ouvrir_dialogue_renouvellement(
+                            o, jours_restants, key_cmd
+                        )
 
-                    # Bouton 2 : Reconduction avec ouverture de fichier
+                    # Bouton 2 : Nouvelle ordonnance - reconduction
                     if st.button(
-                        "📁 Reconduction ordonnance",
+                        "📁 Nouvelle ordonnance - reconduction",
                         key=f"btn_reconduct_{key_cmd}_{i}",
                         use_container_width=True,
                         type="primary",
                     ):
                         ouvrir_dialogue_reconduction(o)
 
-                    # --- 3. CASE À COCHER : Demande effectuée ---
-                    coché = st.checkbox(
-                        "Demande de renouvellement effectuée",
-                        value=est_fait,
-                        key=f"chk_renouv_{key_cmd}_{i}",
-                    )
-
-                    st.session_state.renouvellements_faits[key_cmd] = coché
                     st.markdown(
                         "<hr style='margin: 10px 0;'>", unsafe_allow_html=True
                     )
