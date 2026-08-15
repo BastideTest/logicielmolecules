@@ -30,7 +30,6 @@ def analyser_traitements(texte, date_debut_defaut):
     lignes = [l.strip() for l in texte.split("\n") if l.strip()]
 
     for i, ligne in enumerate(lignes):
-        # Détection d'une molécule (ex: Zolpidem 10 mg, Alprazolam 0,25 mg)
         m = re.search(
             r"([A-Z][a-zà-ÿA-Z]+(?:\s+[A-Z][a-zà-ÿ]+)?)\s+(\d+(?:[\.,]\d+)?\s*(?:mg|g|ml|ui))",
             ligne,
@@ -40,16 +39,14 @@ def analyser_traitements(texte, date_debut_defaut):
             nom_mol = f"{m.group(1)} {m.group(2)}"
             frequence = "1x / jour"
             prise = "Pendant le repas"
-            duree_jours = 30  # Valeur par défaut : 1 mois
+            duree_jours = 30  # Défaut 1 mois
 
-            # Analyse du contexte sur la ligne et les lignes suivantes
             contexte = (
                 (ligne + " " + " ".join(lignes[i + 1 : i + 3]))
                 if i + 1 < len(lignes)
                 else ligne
             ).lower()
 
-            # Détection des moments de prise
             moments = []
             if "matin" in contexte:
                 moments.append("Matin")
@@ -62,7 +59,6 @@ def analyser_traitements(texte, date_debut_defaut):
                 prise = " + ".join(moments)
                 frequence = f"{len(moments)}x / jour"
 
-            # Détection de la durée SPÉCIFIQUE à ce médicament
             if "1 mois" in contexte or "un mois" in contexte:
                 duree_jours = 30
             elif "2 mois" in contexte:
@@ -83,7 +79,6 @@ def analyser_traitements(texte, date_debut_defaut):
                 }
             )
 
-    # Si aucun médicament n'est détecté par Regex, créer un élément par défaut
     if not traitements:
         traitements.append(
             {
@@ -106,7 +101,6 @@ def parser_texte(texte):
         "traitements": [],
     }
 
-    # 1. Médecin / Établissement
     m_doc = re.search(
         r"((?:Docteur|Dr|Hôpital|Hopital|Clinique|CH)\s+[A-Za-zÀ-ÿ\s]+)",
         texte,
@@ -115,7 +109,6 @@ def parser_texte(texte):
     if m_doc:
         donnees["hopital"] = m_doc.group(1).split("\n")[0].strip()
 
-    # 2. Patient
     m_patient = re.search(
         r"([A-Z][a-zà-ÿ]+\s+[A-Z][a-zà-ÿ]+)(?:,\s*\d+\s*ans)?", texte
     )
@@ -124,9 +117,7 @@ def parser_texte(texte):
         if "Docteur" not in nom and "Dr" not in nom:
             donnees["patient"] = nom
 
-    # 3. Extraction individualisée des médicaments
     donnees["traitements"] = analyser_traitements(texte, donnees["date_debut"])
-
     return donnees
 
 
@@ -135,7 +126,12 @@ st.title("💊 Centre Médical - Suivi & Récapitulatif des Ordonnances")
 
 menu = st.sidebar.radio(
     "Navigation",
-    ["1. Nouvelle Ordonnance", "2. Validation Pro", "3. Tableau de Bord & Alertes"],
+    [
+        "1. Nouvelle Ordonnance",
+        "2. Validation Pro",
+        "3. Tableau de Bord & Alertes",
+        "4. Dossier Patient & Hôpital",
+    ],
 )
 
 # -----------------------------------------------------------------------------
@@ -183,17 +179,18 @@ elif menu == "2. Validation Pro":
 
             patient = st.text_input("Nom du Patient", value=d["patient"])
             hopital = st.text_input("Hôpital / Praticien", value=d["hopital"])
-            date_debut = st.date_input("Date de début de traitement", value=d["date_debut"])
+            date_debut = st.date_input(
+                "Date de début de traitement", value=d["date_debut"]
+            )
 
             st.divider()
             st.subheader("Détail par Médicament")
 
             traitements_saisis = []
 
-            # Génération des champs INDIVIDUELS pour chaque médicament
             for idx, trait in enumerate(d["traitements"]):
                 st.markdown(f"### 💊 Médicament n°{idx+1}")
-                
+
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     mol = st.text_input(
@@ -223,9 +220,10 @@ elif menu == "2. Validation Pro":
                         key=f"prise_{idx}",
                     )
 
-                # Calcul dynamique individuel de la date de fin
                 date_fin_mol = date_debut + timedelta(days=int(duree))
-                st.info(f"📅 **Fin de ce traitement : {date_fin_mol.strftime('%d/%m/%Y')}**")
+                st.info(
+                    f"📅 **Fin de ce traitement : {date_fin_mol.strftime('%d/%m/%Y')}**"
+                )
 
                 traitements_saisis.append(
                     {
@@ -242,7 +240,6 @@ elif menu == "2. Validation Pro":
 
             with col_val:
                 if st.button("✅ Valider l'ordonnance", use_container_width=True):
-                    # Enregistre chaque médicament sous forme d'entrée individuelle pour un suivi précis
                     for t in traitements_saisis:
                         st.session_state.ordonnances.append(
                             {
@@ -259,7 +256,7 @@ elif menu == "2. Validation Pro":
                             }
                         )
                     del st.session_state["temp_ordonnance"]
-                    st.success("Toutes les molécules ont été enregistrées avec leurs échéances propres !")
+                    st.success("Ordonnance enregistrée !")
                     st.rerun()
 
             with col_rej:
@@ -288,10 +285,10 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD
+# 3. TABLEAU DE BORD AVEC SYSTÈME DE COULEUR
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
-    st.header("Suivi du renouvellement & Alertes par Médicament")
+    st.header("Tableau de Bord & Échéances des Commandes")
 
     if not st.session_state.ordonnances:
         st.info("Aucune ordonnance enregistrée.")
@@ -299,22 +296,98 @@ elif menu == "3. Tableau de Bord & Alertes":
         df = pd.DataFrame(st.session_state.ordonnances)
         aujourdhui = datetime.today().date()
 
-        st.subheader("🚨 Alertes de renouvellement (Échéance < 3 jours)")
-        alertes = []
+        # Calcul des jours restants et de l'indicateur
+        df["jours_restants"] = df["date_fin"].apply(
+            lambda d: (d - aujourdhui).days
+        )
 
-        for idx, row in df.iterrows():
-            if row["statut"] == "VALIDÉE":
-                jours_restants = (row["date_fin"] - aujourdhui).days
-                if 0 <= jours_restants <= 3:
-                    alertes.append(
-                        f"⚠️ **{row['patient']}** : Recommander **{row['molecule']}** ({row['prise']}) avant le {row['date_fin'].strftime('%d/%m/%Y')} (Reste {jours_restants} j)."
+        def definir_statut_couleur(row):
+            if row["statut"] == "REJETÉE":
+                return "⚪ Rejetée"
+            elif row["jours_restants"] <= 3:
+                return "🔴 Commande Urgente (<= 3j)"
+            elif 4 <= row["jours_restants"] <= 7:
+                return "🟧 À prévoir (4-7j)"
+            else:
+                return "🟩 En cours (> 7j)"
+
+        df["Urgence"] = df.apply(definir_statut_couleur, axis=1)
+
+        # Fonction de coloration des lignes
+        def colorier_lignes(row):
+            if row["statut"] == "REJETÉE":
+                return ["background-color: #f0f0f0; color: #888888"] * len(row)
+            elif row["jours_restants"] <= 3:
+                return ["background-color: #ffcccc; color: #990000"] * len(row)
+            elif 4 <= row["jours_restants"] <= 7:
+                return ["background-color: #ffe6cc; color: #994c00"] * len(row)
+            else:
+                return ["background-color: #e6ffe6; color: #006600"] * len(row)
+
+        st.subheader("Légende des couleurs")
+        st.markdown(
+            "🔴 **Rouge** : ≤ 3 jours restants (Commander immédiatement) | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
+        )
+
+        st.dataframe(
+            df.style.apply(colorier_lignes, axis=1), use_container_width=True
+        )
+
+# -----------------------------------------------------------------------------
+# 4. DOSSIER PATIENT & HÔPITAL (RECHERCHE)
+# -----------------------------------------------------------------------------
+elif menu == "4. Dossier Patient & Hôpital":
+    st.header("🔍 Recherche & Dossiers Médicaux")
+
+    if not st.session_state.ordonnances:
+        st.info("Aucune donnée enregistrée pour le moment.")
+    else:
+        df = pd.DataFrame(st.session_state.ordonnances)
+        aujourdhui = datetime.today().date()
+        df["jours_restants"] = df["date_fin"].apply(
+            lambda d: (d - aujourdhui).days
+        )
+
+        tab1, tab2 = st.tabs(["📁 Dossier par Patient", "🏥 Recherche par Hôpital"])
+
+        # TAB 1 : RECHERCHE PAR PATIENT
+        with tab1:
+            patients_liste = sorted(list(df["patient"].unique()))
+            patient_sel = st.selectbox("Sélectionnez un patient :", patients_liste)
+
+            if patient_sel:
+                df_patient = df[df["patient"] == patient_sel]
+                st.subheader(f"Dossier Médical de : {patient_sel}")
+
+                col_stat1, col_stat2 = st.columns(2)
+                with col_stat1:
+                    st.metric(
+                        "Traitements en cours",
+                        len(df_patient[df_patient["statut"] == "VALIDÉE"]),
+                    )
+                with col_stat2:
+                    st.metric(
+                        "Ordonnances rejetées",
+                        len(df_patient[df_patient["statut"] == "REJETÉE"]),
                     )
 
-        if alertes:
-            for alerte in alertes:
-                st.error(alerte)
-        else:
-            st.success("Aucun réapprovisionnement urgent requis aujourd'hui.")
+                st.markdown("### Traitements et Historique")
+                st.dataframe(df_patient, use_container_width=True)
 
-        st.subheader("Toutes les lignes de traitement")
-        st.dataframe(df, use_container_width=True)
+        # TAB 2 : RECHERCHE PAR HÔPITAL
+        with tab2:
+            hopitaux_liste = sorted(list(df["hopital"].unique()))
+            hopital_sel = st.selectbox(
+                "Sélectionnez un Établissement / Praticien :", hopitaux_liste
+            )
+
+            if hopital_sel:
+                df_hopital = df[df["hopital"] == hopital_sel]
+                st.subheader(f"Patients & Prescriptions pour : {hopital_sel}")
+
+                patients_rattaches = list(df_hopital["patient"].unique())
+                st.write(
+                    f"**Patients rattachés ({len(patients_rattaches)}) :** {', '.join(patients_rattaches)}"
+                )
+
+                st.dataframe(df_hopital, use_container_width=True)
