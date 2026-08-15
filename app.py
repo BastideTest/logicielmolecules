@@ -331,7 +331,7 @@ if menu == "1. Nouvelle Ordonnance":
         )
 
 # -----------------------------------------------------------------------------
-# 2. VALIDATION PRO (SELECTION PATIENT & HOPITAL EXISTANTS)
+# 2. VALIDATION PRO
 # -----------------------------------------------------------------------------
 elif menu == "2. Validation Pro":
     st.header("Relecture & Validation Professionnelle")
@@ -507,7 +507,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD (AVEC OPTION DE MODIFICATION DES ORDONNANCES)
+# 3. TABLEAU DE BORD & ALERTES (SELECTION RECHERCHABLE POUR ÉTABLISSEMENT)
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -600,9 +600,38 @@ elif menu == "3. Tableau de Bord & Alertes":
                         mod_patient = st.text_input(
                             "Nom du Patient", value=row["patient"]
                         )
-                        mod_hopital = st.text_input(
-                            "Établissement / Praticien", value=row["hopital"]
+
+                        # LISTE DYNAMIQUE DES ÉTABLISSEMENTS POUR LA RECHERCHE (SELECTBOX)
+                        liste_hopitaux = sorted(
+                            list(
+                                set(
+                                    [
+                                        h["nom"]
+                                        for h in st.session_state.hopitaux_db
+                                    ]
+                                )
+                            )
                         )
+
+                        # Si l'hôpital actuel n'est pas encore dans l'annuaire, on l'ajoute provisoirement à la liste de choix
+                        if (
+                            row["hopital"]
+                            and row["hopital"] not in liste_hopitaux
+                        ):
+                            liste_hopitaux.insert(0, row["hopital"])
+
+                        # Recherche dynamique par saisie dans la selectbox
+                        index_defaut = (
+                            liste_hopitaux.index(row["hopital"])
+                            if row["hopital"] in liste_hopitaux
+                            else 0
+                        )
+                        mod_hopital = st.selectbox(
+                            "Établissement / Praticien (Tapez pour filtrer)",
+                            options=liste_hopitaux,
+                            index=index_defaut,
+                        )
+
                         mod_molecule = st.text_input(
                             "Médicament & Dosage", value=row["molecule"]
                         )
