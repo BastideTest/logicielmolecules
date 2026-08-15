@@ -109,7 +109,7 @@ def supprimer_ligne(index):
 def generer_lien_mailto(
     destinataire_email, nom_hopital, patient, molecule, jours_restants, date_fin
 ):
-    """Génère une URL mailto: pour ouvrir le client mail par défaut (ex: Outlook) avec un brouillon pré-rempli."""
+    """Génère une URL mailto: pour ouvrir Outlook avec un brouillon pré-rempli."""
     sujet = f"URGENT : Renouvellement d'ordonnance - Patient : {patient}"
     corps = f"""Bonjour,
 
@@ -184,7 +184,6 @@ if not st.session_state.authentifie:
 # APPLICATION PRINCIPALE
 # -----------------------------------------------------------------------------
 
-# Initialisation au premier chargement si connecté
 if "hopitaux_db" not in st.session_state:
     st.session_state.hopitaux_db = charger_hopitaux()
 if "ordonnances" not in st.session_state:
@@ -332,7 +331,7 @@ if menu == "1. Nouvelle Ordonnance":
         )
 
 # -----------------------------------------------------------------------------
-# 2. VALIDATION PRO
+# 2. VALIDATION PRO (SELECTION PATIENT & HOPITAL EXISTANTS)
 # -----------------------------------------------------------------------------
 elif menu == "2. Validation Pro":
     st.header("Relecture & Validation Professionnelle")
@@ -353,29 +352,51 @@ elif menu == "2. Validation Pro":
             st.subheader("Informations Générales")
             d = st.session_state["temp_ordonnance"]["data"]
 
-            patient = st.text_input("Nom du Patient", value=d["patient"])
+            # --- SELECTION DU PATIENT (EXISTANT OU NOUVEAU) ---
+            patients_existants = sorted(
+                list(
+                    set([o["patient"] for o in st.session_state.ordonnances])
+                )
+            )
+            type_patient = st.radio(
+                "Choix du Patient :",
+                ["Patient Existant", "Nouveau Patient"],
+                horizontal=True,
+            )
 
-            # Liste des hôpitaux enregistrés + option d'ajout manuel
-            liste_noms_hopitaux = [
-                h["nom"] for h in st.session_state.hopitaux_db
-            ]
-            idx_selection = 0
+            if type_patient == "Patient Existant" and patients_existants:
+                patient_selectionne = st.selectbox(
+                    "Sélectionnez le Patient :", patients_existants
+                )
+            else:
+                patient_selectionne = st.text_input(
+                    "Nom et Prénom du Patient", value=d["patient"]
+                )
 
-            # Essayer de faire correspondre l'OCR avec un hôpital connu
-            if d["hopital"] in liste_noms_hopitaux:
-                idx_selection = liste_noms_hopitaux.index(d["hopital"])
+            st.markdown("---")
 
-            if liste_noms_hopitaux:
+            # --- SELECTION DE L'ÉTABLISSEMENT (EXISTANT OU NOUVEAU) ---
+            hopitaux_existants = sorted(
+                [h["nom"] for h in st.session_state.hopitaux_db]
+            )
+            type_hopital = st.radio(
+                "Choix de l'Établissement :",
+                ["Établissement Annuaire", "Autre / Nouveau"],
+                horizontal=True,
+            )
+
+            if type_hopital == "Établissement Annuaire" and hopitaux_existants:
+                idx_defaut = 0
+                if d["hopital"] in hopitaux_existants:
+                    idx_defaut = hopitaux_existants.index(d["hopital"])
                 hopital_selectionne = st.selectbox(
-                    "Hôpital / Établissement rattaché :",
-                    options=liste_noms_hopitaux,
-                    index=idx_selection,
+                    "Sélectionnez l'Établissement :",
+                    hopitaux_existants,
+                    index=idx_defaut,
                 )
             else:
                 hopital_selectionne = st.text_input(
-                    "Hôpital / Praticien",
-                    value=d["hopital"],
-                    placeholder="Enregistrez vos établissements dans l'onglet 4",
+                    "Nom de l'Établissement / Praticien", value=d["hopital"]
                 )
 
             date_debut = st.date_input(
@@ -442,7 +463,7 @@ elif menu == "2. Validation Pro":
                     for t in traitements_saisis:
                         st.session_state.ordonnances.append(
                             {
-                                "patient": patient,
+                                "patient": patient_selectionne,
                                 "hopital": hopital_selectionne,
                                 "molecule": t["molecule"],
                                 "frequence": t["frequence"],
@@ -468,7 +489,7 @@ elif menu == "2. Validation Pro":
                         for t in traitements_saisis:
                             st.session_state.ordonnances.append(
                                 {
-                                    "patient": patient,
+                                    "patient": patient_selectionne,
                                     "hopital": hopital_selectionne,
                                     "molecule": t["molecule"],
                                     "frequence": t["frequence"],
@@ -486,7 +507,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD (AVEC LIEN DE RECOMMANDATION OUTLOOK)
+# 3. TABLEAU DE BORD (AVEC OPTION DE MODIFICATION DES ORDONNANCES)
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -501,7 +522,6 @@ elif menu == "3. Tableau de Bord & Alertes":
             "🔴 **Rouge** : ≤ 3 jours restants | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
         )
 
-        # Dictionnaire rapide pour récupérer l'email de chaque hôpital
         map_hopitaux_email = {
             h["nom"]: h.get("email", "") for h in st.session_state.hopitaux_db
         }
@@ -550,13 +570,11 @@ elif menu == "3. Tableau de Bord & Alertes":
                             supprimer_ligne(idx)
                             st.rerun()
 
-                    # Bouton d'ouverture Outlook dynamique si l'ordonnance est Rouge ou Orange
                     with col_btn_email:
                         if alerte_urgente:
                             email_dest = map_hopitaux_email.get(
                                 row["hopital"], ""
                             )
-
                             if email_dest:
                                 mailto_url = generer_lien_mailto(
                                     email_dest,
@@ -572,9 +590,75 @@ elif menu == "3. Tableau de Bord & Alertes":
                                     use_container_width=True,
                                 )
                             else:
-                                st.warning(
-                                    "⚠️ Email établissement non renseigné (onglet 4)"
-                                )
+                                st.warning("⚠️ Email non renseigné")
+
+                # --- PANNEAU DE MODIFICATION DE L'ORDONNANCE ---
+                with st.expander(
+                    f"✏️ Modifier l'ordonnance de {row['patient']} ({row['molecule']})"
+                ):
+                    with st.form(key=f"form_edit_{idx}"):
+                        mod_patient = st.text_input(
+                            "Nom du Patient", value=row["patient"]
+                        )
+                        mod_hopital = st.text_input(
+                            "Établissement / Praticien", value=row["hopital"]
+                        )
+                        mod_molecule = st.text_input(
+                            "Médicament & Dosage", value=row["molecule"]
+                        )
+
+                        col_e1, col_e2 = st.columns(2)
+                        with col_e1:
+                            mod_freq = st.text_input(
+                                "Fréquence", value=row["frequence"]
+                            )
+                            mod_prise = st.text_input(
+                                "Moment de Prise", value=row["prise"]
+                            )
+                        with col_e2:
+                            mod_date_debut = st.date_input(
+                                "Date de Début", value=row["date_debut"]
+                            )
+                            mod_duree = st.number_input(
+                                "Durée (Jours)",
+                                value=int(row["duree"]),
+                                min_value=1,
+                            )
+
+                        btn_sauver_edit = st.form_submit_button(
+                            "💾 Enregistrer les modifications",
+                            use_container_width=True,
+                        )
+
+                        if btn_sauver_edit:
+                            st.session_state.ordonnances[idx]["patient"] = (
+                                mod_patient
+                            )
+                            st.session_state.ordonnances[idx]["hopital"] = (
+                                mod_hopital
+                            )
+                            st.session_state.ordonnances[idx]["molecule"] = (
+                                mod_molecule
+                            )
+                            st.session_state.ordonnances[idx]["frequence"] = (
+                                mod_freq
+                            )
+                            st.session_state.ordonnances[idx]["prise"] = (
+                                mod_prise
+                            )
+                            st.session_state.ordonnances[idx]["date_debut"] = (
+                                mod_date_debut
+                            )
+                            st.session_state.ordonnances[idx]["duree"] = (
+                                mod_duree
+                            )
+                            st.session_state.ordonnances[idx]["date_fin"] = (
+                                mod_date_debut + timedelta(days=int(mod_duree))
+                            )
+
+                            sauvegarder_ordonnances()
+                            st.success("Modifications enregistrées !")
+                            st.rerun()
 
 # -----------------------------------------------------------------------------
 # 4. GESTION ÉTABLISSEMENTS & DOSSIERS PATIENTS
