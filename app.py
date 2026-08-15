@@ -17,6 +17,12 @@ if "ordonnances" not in st.session_state:
 
 
 # --- FONCTIONS BACKEND ---
+def supprimer_ligne(index):
+    """Supprime une ligne spécifique de la liste des ordonnances."""
+    st.session_state.ordonnances.pop(index)
+    st.toast("Ligne supprimée avec succès !", icon="🗑️")
+
+
 def extraire_texte(fichier_image):
     """Ouvre l'image avec PIL et extrait le texte via Tesseract."""
     img = Image.open(fichier_image)
@@ -39,7 +45,7 @@ def analyser_traitements(texte, date_debut_defaut):
             nom_mol = f"{m.group(1)} {m.group(2)}"
             frequence = "1x / jour"
             prise = "Pendant le repas"
-            duree_jours = 30  # Défaut 1 mois
+            duree_jours = 30
 
             contexte = (
                 (ligne + " " + " ".join(lignes[i + 1 : i + 3]))
@@ -285,7 +291,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD AVEC SYSTÈME DE COULEUR
+# 3. TABLEAU DE BORD AVEC SUPPRESSION
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -293,48 +299,55 @@ elif menu == "3. Tableau de Bord & Alertes":
     if not st.session_state.ordonnances:
         st.info("Aucune ordonnance enregistrée.")
     else:
-        df = pd.DataFrame(st.session_state.ordonnances)
         aujourdhui = datetime.today().date()
-
-        # Calcul des jours restants et de l'indicateur
-        df["jours_restants"] = df["date_fin"].apply(
-            lambda d: (d - aujourdhui).days
-        )
-
-        def definir_statut_couleur(row):
-            if row["statut"] == "REJETÉE":
-                return "⚪ Rejetée"
-            elif row["jours_restants"] <= 3:
-                return "🔴 Commande Urgente (<= 3j)"
-            elif 4 <= row["jours_restants"] <= 7:
-                return "🟧 À prévoir (4-7j)"
-            else:
-                return "🟩 En cours (> 7j)"
-
-        df["Urgence"] = df.apply(definir_statut_couleur, axis=1)
-
-        # Fonction de coloration des lignes
-        def colorier_lignes(row):
-            if row["statut"] == "REJETÉE":
-                return ["background-color: #f0f0f0; color: #888888"] * len(row)
-            elif row["jours_restants"] <= 3:
-                return ["background-color: #ffcccc; color: #990000"] * len(row)
-            elif 4 <= row["jours_restants"] <= 7:
-                return ["background-color: #ffe6cc; color: #994c00"] * len(row)
-            else:
-                return ["background-color: #e6ffe6; color: #006600"] * len(row)
 
         st.subheader("Légende des couleurs")
         st.markdown(
-            "🔴 **Rouge** : ≤ 3 jours restants (Commander immédiatement) | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
+            "🔴 **Rouge** : ≤ 3 jours restants | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
         )
 
-        st.dataframe(
-            df.style.apply(colorier_lignes, axis=1), use_container_width=True
-        )
+        # Affichage sous forme de lignes interactives avec bouton de suppression
+        for idx, row in enumerate(list(st.session_state.ordonnances)):
+            jours_restants = (row["date_fin"] - aujourdhui).days
+
+            # Choix du style de bordure/couleur
+            if row["statut"] == "REJETÉE":
+                couleur_fond = "#f0f0f0"
+                badge = "⚪ REJETÉE"
+            elif jours_restants <= 3:
+                couleur_fond = "#ffcccc"
+                badge = f"🔴 COMMANDE URGENTE ({jours_restants}j restants)"
+            elif 4 <= jours_restants <= 7:
+                couleur_fond = "#ffe6cc"
+                badge = f"🟧 À PRÉVOIR ({jours_restants}j restants)"
+            else:
+                couleur_fond = "#e6ffe6"
+                badge = f"🟩 EN COURS ({jours_restants}j restants)"
+
+            # Card Container
+            with st.container():
+                col_info, col_del = st.columns([6, 1])
+
+                with col_info:
+                    st.markdown(
+                        f"""
+                        <div style="background-color: {couleur_fond}; padding: 12px; border-radius: 8px; margin-bottom: 5px; color: #111;">
+                            <strong>Patient :</strong> {row['patient']} | <strong>Praticien :</strong> {row['hopital']}<br>
+                            <strong>Médicament :</strong> {row['molecule']} ({row['prise']}) — {row['frequence']}<br>
+                            <strong>Période :</strong> du {row['date_debut'].strftime('%d/%m/%Y')} au {row['date_fin'].strftime('%d/%m/%Y')} ({row['duree']} jours)<br>
+                            <em>{badge}</em>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                with col_del:
+                    if st.button("🗑️ Supprimer", key=f"del_board_{idx}"):
+                        supprimer_ligne(idx)
+                        st.rerun()
 
 # -----------------------------------------------------------------------------
-# 4. DOSSIER PATIENT & HÔPITAL (RECHERCHE)
+# 4. DOSSIER PATIENT & HÔPITAL (AVEC SUPPRESSION)
 # -----------------------------------------------------------------------------
 elif menu == "4. Dossier Patient & Hôpital":
     st.header("🔍 Recherche & Dossiers Médicaux")
@@ -343,11 +356,6 @@ elif menu == "4. Dossier Patient & Hôpital":
         st.info("Aucune donnée enregistrée pour le moment.")
     else:
         df = pd.DataFrame(st.session_state.ordonnances)
-        aujourdhui = datetime.today().date()
-        df["jours_restants"] = df["date_fin"].apply(
-            lambda d: (d - aujourdhui).days
-        )
-
         tab1, tab2 = st.tabs(["📁 Dossier par Patient", "🏥 Recherche par Hôpital"])
 
         # TAB 1 : RECHERCHE PAR PATIENT
@@ -356,23 +364,35 @@ elif menu == "4. Dossier Patient & Hôpital":
             patient_sel = st.selectbox("Sélectionnez un patient :", patients_liste)
 
             if patient_sel:
-                df_patient = df[df["patient"] == patient_sel]
                 st.subheader(f"Dossier Médical de : {patient_sel}")
 
-                col_stat1, col_stat2 = st.columns(2)
-                with col_stat1:
-                    st.metric(
-                        "Traitements en cours",
-                        len(df_patient[df_patient["statut"] == "VALIDÉE"]),
-                    )
-                with col_stat2:
-                    st.metric(
-                        "Ordonnances rejetées",
-                        len(df_patient[df_patient["statut"] == "REJETÉE"]),
-                    )
+                # Bouton de suppression globale du patient
+                if st.button(
+                    f"⚠️ Supprimer TOUT le dossier de {patient_sel}",
+                    type="primary",
+                ):
+                    st.session_state.ordonnances = [
+                        o
+                        for o in st.session_state.ordonnances
+                        if o["patient"] != patient_sel
+                    ]
+                    st.success(f"Dossier de {patient_sel} supprimé.")
+                    st.rerun()
 
-                st.markdown("### Traitements et Historique")
-                st.dataframe(df_patient, use_container_width=True)
+                st.markdown("---")
+
+                # Affichage des lignes individuelles du patient avec suppression
+                for idx, row in enumerate(list(st.session_state.ordonnances)):
+                    if row["patient"] == patient_sel:
+                        c_txt, c_btn = st.columns([5, 1])
+                        with c_txt:
+                            st.write(
+                                f"💊 **{row['molecule']}** — {row['prise']} (Fin : {row['date_fin'].strftime('%d/%m/%Y')}) - *{row['statut']}*"
+                            )
+                        with c_btn:
+                            if st.button("🗑️ Supprimer", key=f"del_pat_{idx}"):
+                                supprimer_ligne(idx)
+                                st.rerun()
 
         # TAB 2 : RECHERCHE PAR HÔPITAL
         with tab2:
@@ -382,12 +402,16 @@ elif menu == "4. Dossier Patient & Hôpital":
             )
 
             if hopital_sel:
-                df_hopital = df[df["hopital"] == hopital_sel]
-                st.subheader(f"Patients & Prescriptions pour : {hopital_sel}")
+                st.subheader(f"Prescriptions issues de : {hopital_sel}")
 
-                patients_rattaches = list(df_hopital["patient"].unique())
-                st.write(
-                    f"**Patients rattachés ({len(patients_rattaches)}) :** {', '.join(patients_rattaches)}"
-                )
-
-                st.dataframe(df_hopital, use_container_width=True)
+                for idx, row in enumerate(list(st.session_state.ordonnances)):
+                    if row["hopital"] == hopital_sel:
+                        c_txt, c_btn = st.columns([5, 1])
+                        with c_txt:
+                            st.write(
+                                f"👤 **{row['patient']}** ➔ {row['molecule']} ({row['prise']}) - Fin : {row['date_fin'].strftime('%d/%m/%Y')}"
+                            )
+                        with c_btn:
+                            if st.button("🗑️ Supprimer", key=f"del_hop_{idx}"):
+                                supprimer_ligne(idx)
+                                st.rerun()
