@@ -15,9 +15,10 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- CONFIGURATION DU STOCKAGE RÉSEAU ---
-# Adaptez le chemin selon votre serveur (ex: r"\\192.168.1.100\Partage\ordonnances_db.json")
-CHEMIN_RESEAU = r"\\NOM_DU_SERVEUR\Partage\ordonnances_db.json"
+# --- CHEMIN DU FICHIER EN LOCAL / RÉSEAU ---
+# Utilise le dossier Public Documents pour un accès partagé sur la machine
+# Le dossier "bastide" sera créé automatiquement s'il n'existe pas.
+CHEMIN_RESEAU = r"C:\Users\Public\Documents\bastide\ordonnances_db.json"
 
 # --- COMPTES UTILISATEURS AUTORISÉS ---
 COMPTES = {
@@ -25,9 +26,9 @@ COMPTES = {
 }
 
 
-# --- GESTION DU STOCKAGE RÉSEAU ---
+# --- GESTION DU STOCKAGE ---
 def charger_donnees_reseau():
-    """Charge les données depuis le fichier JSON sur le réseau."""
+    """Charge les données depuis le fichier JSON s'il existe."""
     if os.path.exists(CHEMIN_RESEAU):
         try:
             with open(CHEMIN_RESEAU, "r", encoding="utf-8") as f:
@@ -41,13 +42,13 @@ def charger_donnees_reseau():
                     ).date()
                 return data
         except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier réseau : {e}")
+            st.error(f"Erreur lors de la lecture du fichier : {e}")
             return []
     return []
 
 
 def sauvegarder_donnees_reseau():
-    """Sauvegarde la session active dans le fichier JSON réseau."""
+    """Création automatique du dossier s'il n'existe pas, puis sauvegarde."""
     try:
         donnees_a_sauver = []
         for item in st.session_state.ordonnances:
@@ -62,6 +63,7 @@ def sauvegarder_donnees_reseau():
                 )
             donnees_a_sauver.append(item_copy)
 
+        # Création automatique du dossier bastide si absent
         dossier_parent = os.path.dirname(CHEMIN_RESEAU)
         if dossier_parent and not os.path.exists(dossier_parent):
             os.makedirs(dossier_parent, exist_ok=True)
@@ -69,14 +71,14 @@ def sauvegarder_donnees_reseau():
         with open(CHEMIN_RESEAU, "w", encoding="utf-8") as f:
             json.dump(donnees_a_sauver, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.error(f"Erreur d'écriture sur le réseau : {e}")
+        st.error(f"Erreur d'écriture sur le disque : {e}")
 
 
 def supprimer_ligne(index):
-    """Supprime un traitement et synchronise le fichier réseau."""
+    """Supprime un traitement et synchronise la base de données."""
     st.session_state.ordonnances.pop(index)
     sauvegarder_donnees_reseau()
-    st.toast("Ligne supprimée et réseau mis à jour !", icon="🗑️")
+    st.toast("Ligne supprimée avec succès !", icon="🗑️")
 
 
 # --- MODULE D'AUTHENTIFICATION ---
@@ -110,7 +112,7 @@ def deconnexion():
 # ÉCRAN DE LOGIN
 # -----------------------------------------------------------------------------
 if not st.session_state.authentifie:
-    st.title("🔒 Connexion au Système Médical")
+    st.title("🔒 Connexion au Système Médical Bastide")
     st.subheader("Accès restreint aux professionnels de santé autorisés")
 
     col_box, _ = st.columns([1, 1])
@@ -374,7 +376,7 @@ elif menu == "2. Validation Pro":
                         )
                     sauvegarder_donnees_reseau()
                     del st.session_state["temp_ordonnance"]
-                    st.success("Ordonnance enregistrée et sauvegardée sur le réseau !")
+                    st.success("Ordonnance enregistrée avec succès !")
                     st.rerun()
 
             with col_rej:
@@ -410,7 +412,7 @@ elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
 
     if not st.session_state.ordonnances:
-        st.info("Aucune ordonnance enregistrée dans la base réseau.")
+        st.info("Aucune ordonnance enregistrée dans le système.")
     else:
         aujourdhui = datetime.today().date()
 
@@ -463,7 +465,7 @@ elif menu == "4. Dossier Patient & Hôpital":
     st.header("🔍 Recherche & Dossiers Médicaux")
 
     if not st.session_state.ordonnances:
-        st.info("Aucune donnée enregistrée dans la base réseau.")
+        st.info("Aucune donnée enregistrée dans le système.")
     else:
         df = pd.DataFrame(st.session_state.ordonnances)
         tab1, tab2 = st.tabs(["📁 Dossier par Patient", "🏥 Recherche par Hôpital"])
@@ -485,7 +487,7 @@ elif menu == "4. Dossier Patient & Hôpital":
                         if o["patient"] != patient_sel
                     ]
                     sauvegarder_donnees_reseau()
-                    st.success(f"Dossier de {patient_sel} supprimé du réseau.")
+                    st.success(f"Dossier de {patient_sel} supprimé.")
                     st.rerun()
 
                 st.markdown("---")
