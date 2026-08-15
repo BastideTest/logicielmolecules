@@ -3,9 +3,7 @@ import hashlib
 import json
 import os
 import re
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import urllib.parse
 import pandas as pd
 from PIL import Image
 import pytesseract
@@ -18,62 +16,48 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- CHEMIN DU FICHIER EN LOCAL / RÉSEAU ---
-CHEMIN_RESEAU = r"C:\Users\Public\Documents\bastide\ordonnances_db.json"
+# --- CHEMINS DES FICHIERS EN LOCAL / RÉSEAU ---
+CHEMIN_ORDONNANCES = r"C:\Users\Public\Documents\bastide\ordonnances_db.json"
+CHEMIN_HOPITAUX = r"C:\Users\Public\Documents\bastide\hopitaux_db.json"
 
 # --- COMPTES UTILISATEURS AUTORISÉS ---
 COMPTES = {
     "Bastideadmin": hashlib.sha256("moleculesbastide".encode()).hexdigest(),
 }
 
-# --- CONFIGURATION SMTP POUR L'ENVOI DE MAILS ---
-# Remplacez par vos identifiants d'envoi d'établissement/entreprise
-SMTP_SERVER = "smtp.gmail.com"  # Ex: smtp.office365.com pour Outlook/Office365
-SMTP_PORT = 587
-SMTP_USER = "votre_email@domaine.com"
-SMTP_PASSWORD = "votre_mot_de_passe_app"
 
-
-# --- FONCTIONS SERVEUR ET SÉCURITÉ ---
-def envoyer_email_recommande(destinataire_email, nom_hopital, patient, molecule, jours_restants, date_fin):
-    """Envoie un mail automatique d'alerte pour renouvellement d'ordonnance."""
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = SMTP_USER
-        msg["To"] = destinataire_email
-        msg["Subject"] = f"URGENT : Renouvellement d'ordonnance - Patient : {patient}"
-
-        corps = f"""Bonjour,
-
-Nous vous contactons concernant le traitement du patient {patient}, suivi au sein de votre établissement ({nom_hopital}).
-
-Le traitement suivant arrive à échéance :
-- Traitement : {molecule}
-- Date de fin de traitement : {date_fin.strftime('%d/%m/%Y')}
-- Jours restants : {jours_restants} jour(s)
-
-Merci de bien vouloir nous faire parvenir la nouvelle ordonnance renouvelée dans les plus brefs délais afin d'éviter toute rupture de traitement.
-
-Cordialement,
-L'équipe médicale - Bastide
-"""
-        msg.attach(MIMEText(corps, "plain", "utf-8"))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        return True, "Email envoyé avec succès !"
-    except Exception as e:
-        return False, f"Erreur lors de l'envoi de l'email : {e}"
-
-
-def charger_donnees_reseau():
-    """Charge les données depuis le fichier JSON s'il existe."""
-    if os.path.exists(CHEMIN_RESEAU):
+# --- FONCTIONS DE GESTION DES DONNÉES ---
+def charger_hopitaux():
+    """Charge la liste des hôpitaux et leurs coordonnées."""
+    if os.path.exists(CHEMIN_HOPITAUX):
         try:
-            with open(CHEMIN_RESEAU, "r", encoding="utf-8") as f:
+            with open(CHEMIN_HOPITAUX, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture des hôpitaux : {e}")
+            return []
+    return []
+
+
+def sauvegarder_hopitaux():
+    """Sauvegarde les hôpitaux dans le fichier JSON."""
+    try:
+        dossier_parent = os.path.dirname(CHEMIN_HOPITAUX)
+        if dossier_parent and not os.path.exists(dossier_parent):
+            os.makedirs(dossier_parent, exist_ok=True)
+        with open(CHEMIN_HOPITAUX, "w", encoding="utf-8") as f:
+            json.dump(
+                st.session_state.hopitaux_db, f, ensure_ascii=False, indent=4
+            )
+    except Exception as e:
+        st.error(f"Erreur d'écriture sur les hôpitaux : {e}")
+
+
+def charger_ordonnances():
+    """Charge les ordonnances depuis le fichier JSON."""
+    if os.path.exists(CHEMIN_ORDONNANCES):
+        try:
+            with open(CHEMIN_ORDONNANCES, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for item in data:
                     item["date_debut"] = datetime.strptime(
@@ -84,13 +68,13 @@ def charger_donnees_reseau():
                     ).date()
                 return data
         except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier : {e}")
+            st.error(f"Erreur lors de la lecture des ordonnances : {e}")
             return []
     return []
 
 
-def sauvegarder_donnees_reseau():
-    """Création automatique du dossier s'il n'existe pas, puis sauvegarde."""
+def sauvegarder_ordonnances():
+    """Sauvegarde les ordonnances."""
     try:
         donnees_a_sauver = []
         for item in st.session_state.ordonnances:
@@ -105,11 +89,11 @@ def sauvegarder_donnees_reseau():
                 )
             donnees_a_sauver.append(item_copy)
 
-        dossier_parent = os.path.dirname(CHEMIN_RESEAU)
+        dossier_parent = os.path.dirname(CHEMIN_ORDONNANCES)
         if dossier_parent and not os.path.exists(dossier_parent):
             os.makedirs(dossier_parent, exist_ok=True)
 
-        with open(CHEMIN_RESEAU, "w", encoding="utf-8") as f:
+        with open(CHEMIN_ORDONNANCES, "w", encoding="utf-8") as f:
             json.dump(donnees_a_sauver, f, ensure_ascii=False, indent=4)
     except Exception as e:
         st.error(f"Erreur d'écriture sur le disque : {e}")
@@ -118,8 +102,32 @@ def sauvegarder_donnees_reseau():
 def supprimer_ligne(index):
     """Supprime un traitement et synchronise la base de données."""
     st.session_state.ordonnances.pop(index)
-    sauvegarder_donnees_reseau()
+    sauvegarder_ordonnances()
     st.toast("Ligne supprimée avec succès !", icon="🗑️")
+
+
+def generer_lien_mailto(
+    destinataire_email, nom_hopital, patient, molecule, jours_restants, date_fin
+):
+    """Génère une URL mailto: pour ouvrir le client mail par défaut (ex: Outlook) avec un brouillon pré-rempli."""
+    sujet = f"URGENT : Renouvellement d'ordonnance - Patient : {patient}"
+    corps = f"""Bonjour,
+
+Nous vous contactons concernant le traitement du patient {patient}, suivi au sein de votre établissement ({nom_hopital}).
+
+Le traitement suivant arrive à échéance :
+- Traitement : {molecule}
+- Date de fin de traitement : {date_fin.strftime('%d/%m/%Y')}
+- Jours restants : {jours_restants} jour(s)
+
+Merci de bien vouloir nous faire parvenir la nouvelle ordonnance renouvelée dans les plus brefs délais afin d'éviter toute rupture de traitement.
+
+Cordialement,
+L'équipe médicale - Bastide
+"""
+    sujet_encode = urllib.parse.quote(sujet)
+    corps_encode = urllib.parse.quote(corps)
+    return f"mailto:{destinataire_email}?subject={sujet_encode}&body={corps_encode}"
 
 
 # --- MODULE D'AUTHENTIFICATION ---
@@ -135,7 +143,8 @@ def verifier_identifiants(utilisateur, mot_de_passe):
     if utilisateur in COMPTES and COMPTES[utilisateur] == hash_mp:
         st.session_state.authentifie = True
         st.session_state.utilisateur = utilisateur
-        st.session_state.ordonnances = charger_donnees_reseau()
+        st.session_state.ordonnances = charger_ordonnances()
+        st.session_state.hopitaux_db = charger_hopitaux()
         st.rerun()
     else:
         st.error("Identifiant ou mot de passe incorrect.")
@@ -146,6 +155,7 @@ def deconnexion():
     st.session_state.authentifie = False
     st.session_state.utilisateur = ""
     st.session_state.ordonnances = []
+    st.session_state.hopitaux_db = []
     st.rerun()
 
 
@@ -173,6 +183,12 @@ if not st.session_state.authentifie:
 # -----------------------------------------------------------------------------
 # APPLICATION PRINCIPALE
 # -----------------------------------------------------------------------------
+
+# Initialisation au premier chargement si connecté
+if "hopitaux_db" not in st.session_state:
+    st.session_state.hopitaux_db = charger_hopitaux()
+if "ordonnances" not in st.session_state:
+    st.session_state.ordonnances = charger_ordonnances()
 
 st.sidebar.write(f"👤 Connecté en tant que : **{st.session_state.utilisateur}**")
 if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
@@ -290,7 +306,7 @@ menu = st.sidebar.radio(
         "1. Nouvelle Ordonnance",
         "2. Validation Pro",
         "3. Tableau de Bord & Alertes",
-        "4. Dossier Patient & Hôpital",
+        "4. Gestion Établissements & Dossiers",
     ],
 )
 
@@ -338,7 +354,30 @@ elif menu == "2. Validation Pro":
             d = st.session_state["temp_ordonnance"]["data"]
 
             patient = st.text_input("Nom du Patient", value=d["patient"])
-            hopital = st.text_input("Hôpital / Praticien", value=d["hopital"])
+
+            # Liste des hôpitaux enregistrés + option d'ajout manuel
+            liste_noms_hopitaux = [
+                h["nom"] for h in st.session_state.hopitaux_db
+            ]
+            idx_selection = 0
+
+            # Essayer de faire correspondre l'OCR avec un hôpital connu
+            if d["hopital"] in liste_noms_hopitaux:
+                idx_selection = liste_noms_hopitaux.index(d["hopital"])
+
+            if liste_noms_hopitaux:
+                hopital_selectionne = st.selectbox(
+                    "Hôpital / Établissement rattaché :",
+                    options=liste_noms_hopitaux,
+                    index=idx_selection,
+                )
+            else:
+                hopital_selectionne = st.text_input(
+                    "Hôpital / Praticien",
+                    value=d["hopital"],
+                    placeholder="Enregistrez vos établissements dans l'onglet 4",
+                )
+
             date_debut = st.date_input(
                 "Date de début de traitement", value=d["date_debut"]
             )
@@ -404,7 +443,7 @@ elif menu == "2. Validation Pro":
                         st.session_state.ordonnances.append(
                             {
                                 "patient": patient,
-                                "hopital": hopital,
+                                "hopital": hopital_selectionne,
                                 "molecule": t["molecule"],
                                 "frequence": t["frequence"],
                                 "prise": t["prise"],
@@ -415,7 +454,7 @@ elif menu == "2. Validation Pro":
                                 "motif_rejet": "",
                             }
                         )
-                    sauvegarder_donnees_reseau()
+                    sauvegarder_ordonnances()
                     del st.session_state["temp_ordonnance"]
                     st.success("Ordonnance enregistrée avec succès !")
                     st.rerun()
@@ -430,7 +469,7 @@ elif menu == "2. Validation Pro":
                             st.session_state.ordonnances.append(
                                 {
                                     "patient": patient,
-                                    "hopital": hopital,
+                                    "hopital": hopital_selectionne,
                                     "molecule": t["molecule"],
                                     "frequence": t["frequence"],
                                     "prise": t["prise"],
@@ -441,13 +480,13 @@ elif menu == "2. Validation Pro":
                                     "motif_rejet": motif,
                                 }
                             )
-                        sauvegarder_donnees_reseau()
+                        sauvegarder_ordonnances()
                         del st.session_state["temp_ordonnance"]
                         st.warning("Ordonnance rejetée et enregistrée.")
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD (AVEC OPTION ENVOI EMAIL)
+# 3. TABLEAU DE BORD (AVEC LIEN DE RECOMMANDATION OUTLOOK)
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -461,6 +500,11 @@ elif menu == "3. Tableau de Bord & Alertes":
         st.markdown(
             "🔴 **Rouge** : ≤ 3 jours restants | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
         )
+
+        # Dictionnaire rapide pour récupérer l'email de chaque hôpital
+        map_hopitaux_email = {
+            h["nom"]: h.get("email", "") for h in st.session_state.hopitaux_db
+        }
 
         for idx, row in enumerate(list(st.session_state.ordonnances)):
             jours_restants = (row["date_fin"] - aujourdhui).days
@@ -483,13 +527,13 @@ elif menu == "3. Tableau de Bord & Alertes":
                 alerte_urgente = False
 
             with st.container():
-                col_info, col_actions = st.columns([5, 2])
+                col_info, col_actions = st.columns([4, 2])
 
                 with col_info:
                     st.markdown(
                         f"""
                         <div style="background-color: {couleur_fond}; padding: 12px; border-radius: 8px; margin-bottom: 5px; color: #111;">
-                            <strong>Patient :</strong> {row['patient']} | <strong>Praticien :</strong> {row['hopital']}<br>
+                            <strong>Patient :</strong> {row['patient']} | <strong>Établissement :</strong> {row['hopital']}<br>
                             <strong>Médicament :</strong> {row['molecule']} ({row['prise']}) — {row['frequence']}<br>
                             <strong>Période :</strong> du {row['date_debut'].strftime('%d/%m/%Y')} au {row['date_fin'].strftime('%d/%m/%Y')} ({row['duree']} jours)<br>
                             <em>{badge}</em>
@@ -499,65 +543,133 @@ elif menu == "3. Tableau de Bord & Alertes":
                     )
 
                 with col_actions:
-                    col_btn_del, col_btn_email = st.columns([1, 1])
+                    col_btn_del, col_btn_email = st.columns([1, 2])
 
                     with col_btn_del:
                         if st.button("🗑️ Supprimer", key=f"del_board_{idx}"):
                             supprimer_ligne(idx)
                             st.rerun()
 
-                    # Déclencheur du pop-up d'envoi de mail si l'ordonnance est Rouge ou Orange
+                    # Bouton d'ouverture Outlook dynamique si l'ordonnance est Rouge ou Orange
                     with col_btn_email:
                         if alerte_urgente:
-                            with st.popover("📧 Recommander"):
-                                st.write(
-                                    f"**Envoyer une alerte à {row['hopital']}**"
-                                )
-                                email_dest = st.text_input(
-                                    "Email de l'établissement :",
-                                    key=f"email_dest_{idx}",
-                                    placeholder="secretariat@hopital.fr",
-                                )
+                            email_dest = map_hopitaux_email.get(
+                                row["hopital"], ""
+                            )
 
-                                if st.button(
-                                    "🚀 Envoyer l'email",
-                                    key=f"send_mail_btn_{idx}",
-                                ):
-                                    if not email_dest:
-                                        st.error(
-                                            "Veuillez saisir une adresse email."
-                                        )
-                                    else:
-                                        succes, msg = (
-                                            envoyer_email_recommande(
-                                                email_dest,
-                                                row["hopital"],
-                                                row["patient"],
-                                                row["molecule"],
-                                                jours_restants,
-                                                row["date_fin"],
-                                            )
-                                        )
-                                        if succes:
-                                            st.success(msg)
-                                        else:
-                                            st.error(msg)
+                            if email_dest:
+                                mailto_url = generer_lien_mailto(
+                                    email_dest,
+                                    row["hopital"],
+                                    row["patient"],
+                                    row["molecule"],
+                                    jours_restants,
+                                    row["date_fin"],
+                                )
+                                st.link_button(
+                                    "📧 Recommander (Outlook)",
+                                    mailto_url,
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.warning(
+                                    "⚠️ Email établissement non renseigné (onglet 4)"
+                                )
 
 # -----------------------------------------------------------------------------
-# 4. DOSSIER PATIENT & HÔPITAL
+# 4. GESTION ÉTABLISSEMENTS & DOSSIERS PATIENTS
 # -----------------------------------------------------------------------------
-elif menu == "4. Dossier Patient & Hôpital":
-    st.header("🔍 Recherche & Dossiers Médicaux")
+elif menu == "4. Gestion Établissements & Dossiers":
+    st.header("⚙️ Gestion des Établissements & Dossiers Médicaux")
 
-    if not st.session_state.ordonnances:
-        st.info("Aucune donnée enregistrée dans le système.")
-    else:
-        df = pd.DataFrame(st.session_state.ordonnances)
-        tab1, tab2 = st.tabs(["📁 Dossier par Patient", "🏥 Recherche par Hôpital"])
+    tab_hopitaux, tab_patients = st.tabs(
+        ["🏥 Annuaire Établissements / Hôpitaux", "📁 Dossiers Patients"]
+    )
 
-        with tab1:
+    # --- ANNUAIRE DES ÉTABLISSEMENTS ---
+    with tab_hopitaux:
+        st.subheader("➕ Ajouter un Établissement / Praticien")
+
+        with st.form("form_ajouter_hopital", clear_on_submit=True):
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                nom_hop = st.text_input(
+                    "Nom de l'Établissement / Praticien*",
+                    placeholder="Ex: CHU Purpan / Dr. Martin",
+                )
+                email_hop = st.text_input(
+                    "Adresse Email (pour alertes)*",
+                    placeholder="secretariat@hopital.fr",
+                )
+                tel_hop = st.text_input(
+                    "Numéro de Téléphone", placeholder="05 61 00 00 00"
+                )
+            with col_h2:
+                service_hop = st.text_input(
+                    "Service / Spécialité", placeholder="Ex: Pneumologie"
+                )
+                adresse_hop = st.text_area(
+                    "Adresse postale",
+                    placeholder="Place du Dr Baylac, 31059 Toulouse",
+                    height=100,
+                )
+
+            btn_add_hop = st.form_submit_button(
+                "💾 Enregistrer l'établissement", use_container_width=True
+            )
+
+            if btn_add_hop:
+                if not nom_hop or not email_hop:
+                    st.error("Le Nom et l'Email sont obligatoires.")
+                else:
+                    st.session_state.hopitaux_db.append(
+                        {
+                            "nom": nom_hop,
+                            "email": email_hop,
+                            "telephone": tel_hop,
+                            "service": service_hop,
+                            "adresse": adresse_hop,
+                        }
+                    )
+                    sauvegarder_hopitaux()
+                    st.success(
+                        f"L'établissement **{nom_hop}** a été ajouté avec succès !"
+                    )
+                    st.rerun()
+
+        st.divider()
+        st.subheader("📋 Liste des Établissements Enregistrés")
+
+        if not st.session_state.hopitaux_db:
+            st.info("Aucun établissement enregistré pour le moment.")
+        else:
+            for idx_h, h in enumerate(list(st.session_state.hopitaux_db)):
+                with st.expander(
+                    f"🏥 **{h['nom']}** — {h['email']} | 📞 {h['telephone']}"
+                ):
+                    c_det, c_del = st.columns([4, 1])
+                    with c_det:
+                        st.write(f"**Service :** {h.get('service', 'N/C')}")
+                        st.write(f"**Adresse :** {h.get('adresse', 'N/C')}")
+                        st.write(f"**Email direct :** `{h.get('email', '')}`")
+                    with c_del:
+                        if st.button("🗑️ Supprimer", key=f"del_hop_db_{idx_h}"):
+                            st.session_state.hopitaux_db.pop(idx_h)
+                            sauvegarder_hopitaux()
+                            st.toast("Établissement supprimé !")
+                            st.rerun()
+
+    # --- DOSSIERS PATIENTS ---
+    with tab_patients:
+        if not st.session_state.ordonnances:
+            st.info("Aucune donnée ordonnance enregistrée.")
+        else:
+            df = pd.DataFrame(st.session_state.ordonnances)
             patients_liste = sorted(list(df["patient"].unique()))
-            patient_sel = st.selectbox("Sélectionnez un patient :", patients_liste)
+
+            patient_sel = st.selectbox(
+                "Sélectionnez un patient :", patients_liste
+            )
 
             if patient_sel:
                 st.subheader(f"Dossier Médical de : {patient_sel}")
@@ -571,7 +683,7 @@ elif menu == "4. Dossier Patient & Hôpital":
                         for o in st.session_state.ordonnances
                         if o["patient"] != patient_sel
                     ]
-                    sauvegarder_donnees_reseau()
+                    sauvegarder_ordonnances()
                     st.success(f"Dossier de {patient_sel} supprimé.")
                     st.rerun()
 
@@ -582,30 +694,9 @@ elif menu == "4. Dossier Patient & Hôpital":
                         c_txt, c_btn = st.columns([5, 1])
                         with c_txt:
                             st.write(
-                                f"💊 **{row['molecule']}** — {row['prise']} (Fin : {row['date_fin'].strftime('%d/%m/%Y')}) - *{row['statut']}*"
+                                f"💊 **{row['molecule']}** ({row['hopital']}) — {row['prise']} (Fin : {row['date_fin'].strftime('%d/%m/%Y')}) - *{row['statut']}*"
                             )
                         with c_btn:
                             if st.button("🗑️ Supprimer", key=f"del_pat_{idx}"):
-                                supprimer_ligne(idx)
-                                st.rerun()
-
-        with tab2:
-            hopitaux_liste = sorted(list(df["hopital"].unique()))
-            hopital_sel = st.selectbox(
-                "Sélectionnez un Établissement / Praticien :", hopitaux_liste
-            )
-
-            if hopital_sel:
-                st.subheader(f"Prescriptions issues de : {hopital_sel}")
-
-                for idx, row in enumerate(list(st.session_state.ordonnances)):
-                    if row["hopital"] == hopital_sel:
-                        c_txt, c_btn = st.columns([5, 1])
-                        with c_txt:
-                            st.write(
-                                f"👤 **{row['patient']}** ➔ {row['molecule']} ({row['prise']}) - Fin : {row['date_fin'].strftime('%d/%m/%Y')}"
-                            )
-                        with c_btn:
-                            if st.button("🗑️ Supprimer", key=f"del_hop_{idx}"):
                                 supprimer_ligne(idx)
                                 st.rerun()
