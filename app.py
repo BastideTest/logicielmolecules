@@ -1,6 +1,7 @@
+import hashlib
+import json
+import os
 from datetime import datetime, timedelta
-import re
-import numpy as np
 import pandas as pd
 from PIL import Image
 import pytesseract
@@ -8,30 +9,142 @@ import streamlit as st
 
 # --- CONFIGURATION PAGE ---
 st.set_page_config(
-    page_title="Gestionnaire d'Ordonnances", page_icon="💊", layout="wide"
+    page_title="Gestionnaire d'Ordonnances - Sécurisé",
+    page_icon="🔒",
+    layout="wide",
 )
 
-# --- BASE DE DONNÉES EN MÉMOIRE ---
-if "ordonnances" not in st.session_state:
-    st.session_state.ordonnances = []
+# --- CONFIGURATION DU STOCKAGE RÉSEAU ---
+CHEMIN_RESEAU = r"\\NOM_DU_SERVEUR\Partage\ordonnances_db.json"
+
+# --- COMPTES UTILISATEURS AUTORISÉS (Mots de passe hachés) ---
+# Astuce : Utilisez un mot de passe fort en production.
+COMPTES = {
+    "admin": hashlib.sha256("Admin123!".encode()).hexdigest(),
+    "medecin": hashlib.sha256("Sante2026*".encode()).hexdigest(),
+}
 
 
-# --- FONCTIONS BACKEND ---
+# --- GESTION DU STOCKAGE RÉSEAU ---
+def charger_donnees_reseau():
+    """Charge les données depuis le fichier JSON sur le réseau."""
+    if os.path.exists(CHEMIN_RESEAU):
+        try:
+            with open(CHEMIN_RESEAU, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for item in data:
+                    item["date_debut"] = datetime.strptime(
+                        item["date_debut"], "%Y-%m-%d"
+                    ).date()
+                    item["date_fin"] = datetime.strptime(
+                        item["date_fin"], "%Y-%m-%d"
+                    ).date()
+                return data
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture du fichier réseau : {e}")
+            return []
+    return []
+
+
+def sauvegarder_donnees_reseau():
+    """Sauvegarde la session active dans le fichier JSON réseau."""
+    try:
+        donnees_a_sauver = []
+        for item in st.session_state.ordonnances:
+            item_copy = item.copy()
+            if isinstance(item_copy["date_debut"], (datetime, datetime.date)):
+                item_copy["date_debut"] = item_copy["date_debut"].strftime(
+                    "%Y-%m-%d"
+                )
+            if isinstance(item_copy["date_fin"], (datetime, datetime.date)):
+                item_copy["date_fin"] = item_copy["date_fin"].strftime(
+                    "%Y-%m-%d"
+                )
+            donnees_a_sauver.append(item_copy)
+
+        os.makedirs(os.path.dirname(CHEMIN_RESEAU), exist_ok=True)
+        with open(CHEMIN_RESEAU, "w", encoding="utf-8") as f:
+            json.dump(donnees_a_sauver, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.error(f"Erreur d'écriture sur le réseau : {e}")
+
+
 def supprimer_ligne(index):
-    """Supprime une ligne spécifique de la liste des ordonnances."""
+    """Supprime un traitement et synchronise le fichier réseau."""
     st.session_state.ordonnances.pop(index)
-    st.toast("Ligne supprimée avec succès !", icon="🗑️")
+    sauvegarder_donnees_reseau()
+    st.toast("Ligne supprimée et réseau mis à jour !", icon="🗑️")
 
 
+# --- MODULE D'AUTHENTIFICATION ---
+if "authentifie" not in st.session_state:
+    st.session_state.authentifie = False
+if "utilisateur" not in st.session_state:
+    st.session_state.utilisateur = ""
+
+
+def verifier_identifiants(utilisateur, mot_de_passe):
+    """Vérifie le hash SHA-256 du mot de passe saisi."""
+    hash_mp = hashlib.sha256(mot_de_passe.encode()).hexdigest()
+    if utilisateur in COMPTES and COMPTES[utilisateur] == hash_mp:
+        st.session_state.authentifie = True
+        st.session_state.utilisateur = utilisateur
+        # Chargement sécurisé des données au moment de la connexion
+        st.session_state.ordonnances = charger_donnees_reseau()
+        st.rerun()
+    else:
+        st.error("Identifiant ou mot de passe incorrect.")
+
+
+def deconnexion():
+    """Réinitialise la session utilisateur."""
+    st.session_state.authentifie = False
+    st.session_state.utilisateur = ""
+    st.session_state.ordonnances = []
+    st.rerun()
+
+
+# -----------------------------------------------------------------------------
+# ECRAN DE LOGIN (Si non connecté)
+# -----------------------------------------------------------------------------
+if not st.session_state.authentifie:
+    st.title("🔒 Connexion au Système Médical")
+    st.subheader("Accès restreint aux professionnels de santé autorisés")
+
+    col_box, _ = st.columns([1, 1])
+    with col_box:
+        with st.form("form_login"):
+            user_input = st.text_input("Identifiant")
+            pass_input = st.text_input("Mot de passe", type="password")
+            submit_btn = st.form_submit_button(
+                "Se connecter", use_container_width=True
+            )
+
+            if submit_btn:
+                verifier_identifiants(user_input, pass_input)
+
+    st.stop()  # Empêche l'exécution du reste du code si l'utilisateur n'est pas authentifié
+
+# -----------------------------------------------------------------------------
+# APPLICATION PRINCIPALE (Si connecté)
+# -----------------------------------------------------------------------------
+
+# Barre de déconnexion dans le menu latéral
+st.sidebar.write(f"👤 Connecté en tant que : **{st.session_state.utilisateur}**")
+if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
+    deconnexion()
+
+st.sidebar.divider()
+
+
+# --- FONCTIONS OCR & PARSER ---
 def extraire_texte(fichier_image):
-    """Ouvre l'image avec PIL et extrait le texte via Tesseract."""
     img = Image.open(fichier_image)
     texte = pytesseract.image_to_string(img, lang="fra")
     return texte, img
 
 
 def analyser_traitements(texte, date_debut_defaut):
-    """Détecte chaque médicament et lui attribue SA PROPRE durée, fréquence, prise et date de fin."""
     traitements = []
     lignes = [l.strip() for l in texte.split("\n") if l.strip()]
 
@@ -99,7 +212,6 @@ def analyser_traitements(texte, date_debut_defaut):
 
 
 def parser_texte(texte):
-    """Extraction globale du document."""
     donnees = {
         "patient": "",
         "hopital": "",
@@ -127,8 +239,8 @@ def parser_texte(texte):
     return donnees
 
 
-# --- FRONTEND STREAMLIT ---
-st.title("💊 Centre Médical - Suivi & Récapitulatif des Ordonnances")
+# --- MENU DE NAVIGATION ---
+st.title("💊 Centre Médical - Suivi des Ordonnances")
 
 menu = st.sidebar.radio(
     "Navigation",
@@ -261,8 +373,9 @@ elif menu == "2. Validation Pro":
                                 "motif_rejet": "",
                             }
                         )
+                    sauvegarder_donnees_reseau()
                     del st.session_state["temp_ordonnance"]
-                    st.success("Ordonnance enregistrée !")
+                    st.success("Ordonnance enregistrée et sauvegardée sur le réseau !")
                     st.rerun()
 
             with col_rej:
@@ -286,18 +399,19 @@ elif menu == "2. Validation Pro":
                                     "motif_rejet": motif,
                                 }
                             )
+                        sauvegarder_donnees_reseau()
                         del st.session_state["temp_ordonnance"]
-                        st.warning("Ordonnance rejetée.")
+                        st.warning("Ordonnance rejetée et enregistrée.")
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD AVEC SUPPRESSION
+# 3. TABLEAU DE BORD
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
 
     if not st.session_state.ordonnances:
-        st.info("Aucune ordonnance enregistrée.")
+        st.info("Aucune ordonnance enregistrée dans la base réseau.")
     else:
         aujourdhui = datetime.today().date()
 
@@ -306,11 +420,9 @@ elif menu == "3. Tableau de Bord & Alertes":
             "🔴 **Rouge** : ≤ 3 jours restants | 🟧 **Orange** : 4 à 7 jours restants | 🟩 **Vert** : > 7 jours restants | ⚪ **Gris** : Rejetée"
         )
 
-        # Affichage sous forme de lignes interactives avec bouton de suppression
         for idx, row in enumerate(list(st.session_state.ordonnances)):
             jours_restants = (row["date_fin"] - aujourdhui).days
 
-            # Choix du style de bordure/couleur
             if row["statut"] == "REJETÉE":
                 couleur_fond = "#f0f0f0"
                 badge = "⚪ REJETÉE"
@@ -324,7 +436,6 @@ elif menu == "3. Tableau de Bord & Alertes":
                 couleur_fond = "#e6ffe6"
                 badge = f"🟩 EN COURS ({jours_restants}j restants)"
 
-            # Card Container
             with st.container():
                 col_info, col_del = st.columns([6, 1])
 
@@ -347,18 +458,17 @@ elif menu == "3. Tableau de Bord & Alertes":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 4. DOSSIER PATIENT & HÔPITAL (AVEC SUPPRESSION)
+# 4. DOSSIER PATIENT & HÔPITAL
 # -----------------------------------------------------------------------------
 elif menu == "4. Dossier Patient & Hôpital":
     st.header("🔍 Recherche & Dossiers Médicaux")
 
     if not st.session_state.ordonnances:
-        st.info("Aucune donnée enregistrée pour le moment.")
+        st.info("Aucune donnée enregistrée dans la base réseau.")
     else:
         df = pd.DataFrame(st.session_state.ordonnances)
         tab1, tab2 = st.tabs(["📁 Dossier par Patient", "🏥 Recherche par Hôpital"])
 
-        # TAB 1 : RECHERCHE PAR PATIENT
         with tab1:
             patients_liste = sorted(list(df["patient"].unique()))
             patient_sel = st.selectbox("Sélectionnez un patient :", patients_liste)
@@ -366,7 +476,6 @@ elif menu == "4. Dossier Patient & Hôpital":
             if patient_sel:
                 st.subheader(f"Dossier Médical de : {patient_sel}")
 
-                # Bouton de suppression globale du patient
                 if st.button(
                     f"⚠️ Supprimer TOUT le dossier de {patient_sel}",
                     type="primary",
@@ -376,12 +485,12 @@ elif menu == "4. Dossier Patient & Hôpital":
                         for o in st.session_state.ordonnances
                         if o["patient"] != patient_sel
                     ]
-                    st.success(f"Dossier de {patient_sel} supprimé.")
+                    sauvegarder_donnees_reseau()
+                    st.success(f"Dossier de {patient_sel} supprimé du réseau.")
                     st.rerun()
 
                 st.markdown("---")
 
-                # Affichage des lignes individuelles du patient avec suppression
                 for idx, row in enumerate(list(st.session_state.ordonnances)):
                     if row["patient"] == patient_sel:
                         c_txt, c_btn = st.columns([5, 1])
@@ -394,7 +503,6 @@ elif menu == "4. Dossier Patient & Hôpital":
                                 supprimer_ligne(idx)
                                 st.rerun()
 
-        # TAB 2 : RECHERCHE PAR HÔPITAL
         with tab2:
             hopitaux_liste = sorted(list(df["hopital"].unique()))
             hopital_sel = st.selectbox(
