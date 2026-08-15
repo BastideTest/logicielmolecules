@@ -6,12 +6,12 @@ from PIL import Image
 import pytesseract
 import streamlit as st
 
-# --- CONFIGURATION PAGE ---
+# --- CONFIGURATION DE LA PAGE STREAMLIT ---
 st.set_page_config(
     page_title="Gestionnaire d'Ordonnances", page_icon="💊", layout="wide"
 )
 
-# --- BASE DE DONNÉES EN MÉMOIRE ---
+# --- INITIALISATION DE LA BASE DE DONNÉES EN MÉMOIRE ---
 if "ordonnances" not in st.session_state:
     st.session_state.ordonnances = []
 
@@ -35,35 +35,35 @@ def parser_texte(texte):
         "duree": 7,
     }
 
-    # Nom du patient
+    # Extraction du Nom du Patient
     m_patient = re.search(
-        r"(?:Patient|Nom)\s*:\s*([A-Za-ZÀ-ÿ\s]+)", texte, re.IGNORECASE
+        r"(?:Patient|Nom)\s*:\s*([A-Za-zÀ-ÿ\s]+)", texte, re.IGNORECASE
     )
     if m_patient:
         donnees["patient"] = m_patient.group(1).strip()
 
-    # Hôpital
+    # Extraction de l'Hôpital
     m_hopital = re.search(
-        r"((?:Hôpital|Hopital|Clinique|CH)\s+[A-Za-ZÀ-ÿ\s]+)",
+        r"((?:Hôpital|Hopital|Clinique|CH)\s+[A-Za-zÀ-ÿ\s]+)",
         texte,
         re.IGNORECASE,
     )
     if m_hopital:
         donnees["hopital"] = m_hopital.group(1).strip()
 
-    # Molécule
+    # Extraction de la Molécule
     m_molecule = re.search(r"([A-Z][a-zà-ÿ]+)\s+(\d+\s*(?:mg|g|ml))", texte)
     if m_molecule:
         donnees["molecule"] = f"{m_molecule.group(1)} {m_molecule.group(2)}"
 
-    # Fréquence
+    # Extraction de la Fréquence
     m_freq = re.search(
         r"(\d+)\s*(?:fois par jour|/jour|par jour)", texte, re.IGNORECASE
     )
     if m_freq:
         donnees["frequence"] = int(m_freq.group(1))
 
-    # Durée
+    # Extraction de la Durée
     m_duree = re.search(r"pendant\s+(\d+)\s*jours", texte, re.IGNORECASE)
     if m_duree:
         donnees["duree"] = int(m_duree.group(1))
@@ -71,16 +71,17 @@ def parser_texte(texte):
     return donnees
 
 
-# --- INTERFACE UTILISATEUR (FRONTEND) ---
+# --- INTERFACE GRAPHIQUE (FRONTEND) ---
 st.title("💊 Centre Médical - Suivi & Récapitulatif des Ordonnances")
 
+# Menu de Navigation
 menu = st.sidebar.radio(
     "Navigation",
     ["1. Nouvelle Ordonnance", "2. Validation Pro", "3. Tableau de Bord & Alertes"],
 )
 
 # -----------------------------------------------------------------------------
-# ONGLET 1 : UPLOAD
+# ONGLET 1 : UPLOAD D'ORDONNANCE
 # -----------------------------------------------------------------------------
 if menu == "1. Nouvelle Ordonnance":
     st.header("Upload de l'ordonnance")
@@ -92,6 +93,7 @@ if menu == "1. Nouvelle Ordonnance":
         texte_extrait, img = extraire_texte(fichier)
         donnees_preremplies = parser_texte(texte_extrait)
 
+        # Sauvegarde temporaire pour la relecture
         st.session_state["temp_ordonnance"] = {
             "image": fichier,
             "data": donnees_preremplies,
@@ -101,16 +103,17 @@ if menu == "1. Nouvelle Ordonnance":
         )
 
 # -----------------------------------------------------------------------------
-# ONGLET 2 : VALIDATION
+# ONGLET 2 : RELECTURE ET VALIDATION PRO
 # -----------------------------------------------------------------------------
 elif menu == "2. Validation Pro":
     st.header("Relecture & Validation Professionnelle")
 
     if "temp_ordonnance" not in st.session_state:
-        st.info("Aucune ordonnance en attente de relecture.")
+        st.info("Aucune ordonnance en attente de relecture. Veuillez d'abord en téléverser une.")
     else:
         col_img, col_form = st.columns([1, 1])
 
+        # Colonne de Gauche : Affichage de l'ordonnance
         with col_img:
             st.image(
                 st.session_state["temp_ordonnance"]["image"],
@@ -118,6 +121,7 @@ elif menu == "2. Validation Pro":
                 use_container_width=True,
             )
 
+        # Colonne de Droite : Formulaire pré-rempli
         with col_form:
             st.subheader("Champs extraits")
             d = st.session_state["temp_ordonnance"]["data"]
@@ -154,7 +158,7 @@ elif menu == "2. Validation Pro":
                         }
                     )
                     del st.session_state["temp_ordonnance"]
-                    st.success("Ordonnance enregistrée !")
+                    st.success("Ordonnance validée et enregistrée !")
                     st.rerun()
 
             with col_rej:
@@ -181,7 +185,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ONGLET 3 : TABLEAU DE BORD
+# ONGLET 3 : TABLEAU DE BORD ET ALERTES
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Suivi du renouvellement & Alertes quotidiennes")
@@ -192,6 +196,7 @@ elif menu == "3. Tableau de Bord & Alertes":
         df = pd.DataFrame(st.session_state.ordonnances)
         aujourdhui = datetime.today().date()
 
+        # Alertes de renouvellement
         st.subheader("🚨 Alertes de renouvellement (Échéance < 3 jours)")
         alertes = []
 
