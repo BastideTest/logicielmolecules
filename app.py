@@ -6,33 +6,22 @@ from PIL import Image
 import pytesseract
 import streamlit as st
 
-# Configuration de la page
+# --- CONFIGURATION PAGE ---
 st.set_page_config(
     page_title="Gestionnaire d'Ordonnances", page_icon="💊", layout="wide"
 )
 
-
-def extraire_texte(image_file):
-    """Ouvre l'image avec PIL et extrait le texte via Tesseract."""
-    img = Image.open(image_file)
-    texte = pytesseract.image_to_string(img, lang="fra")
-    return texte, img
-
-# --- INITIALISATION DE LA BASE DE DONNÉES EN MÉMOIRE ---
+# --- BASE DE DONNÉES EN MÉMOIRE ---
 if "ordonnances" not in st.session_state:
     st.session_state.ordonnances = []
 
 
-# --- FONCTIONS TECHNIQUES (BACKEND) ---
-def extraire_texte(image_bytes):
-    """Convertit l'image envoyée via l'interface web en texte."""
-    file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(
-        gray, 150, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU
-    )
-    return pytesseract.image_to_string(thresh, lang="fra"), img
+# --- FONCTIONS DE TRAITEMENT (BACKEND) ---
+def extraire_texte(fichier_image):
+    """Ouvre l'image avec PIL et extrait le texte via Tesseract."""
+    img = Image.open(fichier_image)
+    texte = pytesseract.image_to_string(img, lang="fra")
+    return texte, img
 
 
 def parser_texte(texte):
@@ -46,14 +35,14 @@ def parser_texte(texte):
         "duree": 7,
     }
 
-    # Extraction du Nom du Patient
+    # Nom du patient
     m_patient = re.search(
         r"(?:Patient|Nom)\s*:\s*([A-Za-ZÀ-ÿ\s]+)", texte, re.IGNORECASE
     )
     if m_patient:
         donnees["patient"] = m_patient.group(1).strip()
 
-    # Extraction de l'Hôpital
+    # Hôpital
     m_hopital = re.search(
         r"((?:Hôpital|Hopital|Clinique|CH)\s+[A-Za-ZÀ-ÿ\s]+)",
         texte,
@@ -62,19 +51,19 @@ def parser_texte(texte):
     if m_hopital:
         donnees["hopital"] = m_hopital.group(1).strip()
 
-    # Extraction de la Molécule
+    # Molécule
     m_molecule = re.search(r"([A-Z][a-zà-ÿ]+)\s+(\d+\s*(?:mg|g|ml))", texte)
     if m_molecule:
         donnees["molecule"] = f"{m_molecule.group(1)} {m_molecule.group(2)}"
 
-    # Extraction de la Fréquence
+    # Fréquence
     m_freq = re.search(
         r"(\d+)\s*(?:fois par jour|/jour|par jour)", texte, re.IGNORECASE
     )
     if m_freq:
         donnees["frequence"] = int(m_freq.group(1))
 
-    # Extraction de la Durée
+    # Durée
     m_duree = re.search(r"pendant\s+(\d+)\s*jours", texte, re.IGNORECASE)
     if m_duree:
         donnees["duree"] = int(m_duree.group(1))
@@ -82,17 +71,16 @@ def parser_texte(texte):
     return donnees
 
 
-# --- INTERFACE GRAPHIQUE (FRONTEND) ---
+# --- INTERFACE UTILISATEUR (FRONTEND) ---
 st.title("💊 Centre Médical - Suivi & Récapitulatif des Ordonnances")
 
-# Menu Navigation
 menu = st.sidebar.radio(
     "Navigation",
     ["1. Nouvelle Ordonnance", "2. Validation Pro", "3. Tableau de Bord & Alertes"],
 )
 
 # -----------------------------------------------------------------------------
-# ONGLET 1 : UPLOAD D'ORDONNANCE
+# ONGLET 1 : UPLOAD
 # -----------------------------------------------------------------------------
 if menu == "1. Nouvelle Ordonnance":
     st.header("Upload de l'ordonnance")
@@ -101,12 +89,9 @@ if menu == "1. Nouvelle Ordonnance":
     )
 
     if fichier is not None:
-        import numpy as np
-
-        texte_extrait, img_cv = extraire_texte(fichier)
+        texte_extrait, img = extraire_texte(fichier)
         donnees_preremplies = parser_texte(texte_extrait)
 
-        # Sauvegarde temporaire pour la relecture
         st.session_state["temp_ordonnance"] = {
             "image": fichier,
             "data": donnees_preremplies,
@@ -116,25 +101,23 @@ if menu == "1. Nouvelle Ordonnance":
         )
 
 # -----------------------------------------------------------------------------
-# ONGLET 2 : RELECTURE ET VALIDATION PRO
+# ONGLET 2 : VALIDATION
 # -----------------------------------------------------------------------------
 elif menu == "2. Validation Pro":
     st.header("Relecture & Validation Professionnelle")
 
     if "temp_ordonnance" not in st.session_state:
-        st.info("Acuune ordonnance en attente de relecture. Veuillez d'abord en téléverser une.")
+        st.info("Aucune ordonnance en attente de relecture.")
     else:
         col_img, col_form = st.columns([1, 1])
 
-        # Colonne de Gauche : Affichage de l'ordonnance
         with col_img:
             st.image(
                 st.session_state["temp_ordonnance"]["image"],
                 caption="Ordonnance originale",
-                use_column_width=True,
+                use_container_width=True,
             )
 
-        # Colonne de Droite : Formulaire pré-rempli
         with col_form:
             st.subheader("Champs extraits")
             d = st.session_state["temp_ordonnance"]["data"]
@@ -171,7 +154,7 @@ elif menu == "2. Validation Pro":
                         }
                     )
                     del st.session_state["temp_ordonnance"]
-                    st.success("Ordonnance validée et enregistrée !")
+                    st.success("Ordonnance enregistrée !")
                     st.rerun()
 
             with col_rej:
@@ -198,18 +181,17 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# ONGLET 3 : TABLEAU DE BORD ET ALERTES
+# ONGLET 3 : TABLEAU DE BORD
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Suivi du renouvellement & Alertes quotidiennes")
 
     if not st.session_state.ordonnances:
-        st.write("Acuune donnée enregistrée pour le moment.")
+        st.write("Aucune donnée enregistrée pour le moment.")
     else:
         df = pd.DataFrame(st.session_state.ordonnances)
         aujourdhui = datetime.today().date()
 
-        # Filtrer les alertes
         st.subheader("🚨 Alertes de renouvellement (Échéance < 3 jours)")
         alertes = []
 
@@ -218,7 +200,7 @@ elif menu == "3. Tableau de Bord & Alertes":
                 jours_restants = (row["date_fin"] - aujourdhui).days
                 if 0 <= jours_restants <= 3:
                     alertes.append(
-                        f"⚠️ **{row['patient']}** ({row['hopital']}) : Récommander la molécule **{row['molecule']}** avant le {row['date_fin'].strftime('%d/%m/%Y')} (Reste {jours_restants} jours)."
+                        f"⚠️ **{row['patient']}** ({row['hopital']}) : Recommander **{row['molecule']}** avant le {row['date_fin'].strftime('%d/%m/%Y')} (Reste {jours_restants} jours)."
                     )
 
         if alertes:
