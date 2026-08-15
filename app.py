@@ -188,8 +188,8 @@ if "hopitaux_db" not in st.session_state:
     st.session_state.hopitaux_db = charger_hopitaux()
 if "ordonnances" not in st.session_state:
     st.session_state.ordonnances = charger_ordonnances()
-if "commandes_faites" not in st.session_state:
-    st.session_state.commandes_faites = {}
+if "renouvellements_faits" not in st.session_state:
+    st.session_state.renouvellements_faits = {}
 
 st.sidebar.write(f"👤 Connecté en tant que : **{st.session_state.utilisateur}**")
 if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
@@ -870,7 +870,7 @@ elif menu == "5. Planning Hebdomadaire":
         h["nom"]: h.get("email", "") for h in st.session_state.hopitaux_db
     }
 
-    # Fenêtre Modale pour le renouvellement par Email
+    # Modale 1 : Demande de renouvellement par Email
     @st.dialog("📩 Fiche de renouvellement par Email")
     def ouvrir_dialogue_renouvellement(o, jours_restants):
         st.markdown(f"### Patient : **{o['patient']}**")
@@ -906,6 +906,35 @@ elif menu == "5. Planning Hebdomadaire":
             st.info(
                 "Rendez-vous dans le menu **'4. Gestion Établissements'** pour ajouter son e-mail."
             )
+
+    # Modale 2 : Dépôt du fichier de reconduction
+    @st.dialog("📁 Reconduction Ordonnance - Dépôt de fichier")
+    def ouvrir_dialogue_reconduction(o):
+        st.markdown(f"### Reconduction pour : **{o['patient']}**")
+        st.write(f"**Traitement :** {o['molecule']}")
+        st.write(f"**Établissement :** {o['hopital']}")
+
+        st.divider()
+        fichier_nouveau = st.file_uploader(
+            "Déposez la nouvelle ordonnance scannée (PNG, JPG)",
+            type=["png", "jpg", "jpeg"],
+            key=f"file_reconduction_{o['patient']}_{o['molecule']}",
+        )
+
+        if fichier_nouveau is not None:
+            texte_extrait, img = extraire_texte(fichier_nouveau)
+            donnees = parser_texte(texte_extrait)
+            donnees["patient"] = o["patient"]
+            donnees["hopital"] = o["hopital"]
+
+            st.session_state["temp_ordonnance"] = {
+                "image": fichier_nouveau,
+                "data": donnees,
+            }
+            st.success(
+                "Nouvelle ordonnance chargée avec succès !"
+            )
+            st.info("Rendez-vous dans le menu **'2. Validation Pro'** pour valider la reconduction.")
 
     # Filtre patient
     patients_dispo = ["Tous les patients"] + sorted(
@@ -980,17 +1009,25 @@ elif menu == "5. Planning Hebdomadaire":
                     ):
                         ouvrir_dialogue_renouvellement(o, jours_restants)
 
-                    # 2. CASE À COCHER (Commande faite)
-                    est_fait = st.session_state.commandes_faites.get(
+                    # 2. CASE À COCHER : Demande de renouvellement effectuée
+                    est_fait = st.session_state.renouvellements_faits.get(
                         key_cmd, False
                     )
                     coché = st.checkbox(
-                        "Commandé",
+                        "Demande de renouvellement effectuée",
                         value=est_fait,
-                        key=f"chk_{key_cmd}_{i}",
+                        key=f"chk_renouv_{key_cmd}_{i}",
                     )
 
-                    st.session_state.commandes_faites[key_cmd] = coché
+                    st.session_state.renouvellements_faits[key_cmd] = coché
+
+                    # 3. BOUTON RECONDUCTION ORDONNANCE (ouvre le dépôt de fichier)
+                    if st.button(
+                        "📁 Reconduction ordonnance",
+                        key=f"btn_reconduct_{key_cmd}_{i}",
+                        use_container_width=True,
+                    ):
+                        ouvrir_dialogue_reconduction(o)
 
                     # Visualisation du statut
                     if coché:
