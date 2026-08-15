@@ -1,14 +1,22 @@
 from datetime import datetime, timedelta
 import re
-import cv2
+import numpy as np
 import pandas as pd
+from PIL import Image
 import pytesseract
 import streamlit as st
 
-# Configuration de la page Streamlit
+# Configuration de la page
 st.set_page_config(
     page_title="Gestionnaire d'Ordonnances", page_icon="💊", layout="wide"
 )
+
+
+def extraire_texte(image_file):
+    """Ouvre l'image avec PIL et extrait le texte via Tesseract."""
+    img = Image.open(image_file)
+    texte = pytesseract.image_to_string(img, lang="fra")
+    return texte, img
 
 # --- INITIALISATION DE LA BASE DE DONNÉES EN MÉMOIRE ---
 if "ordonnances" not in st.session_state:
