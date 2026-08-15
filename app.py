@@ -306,6 +306,7 @@ menu = st.sidebar.radio(
         "2. Validation Pro",
         "3. Tableau de Bord & Alertes",
         "4. Gestion Établissements & Dossiers",
+        "5. Planning Annuel des Traitements",
     ],
 )
 
@@ -507,7 +508,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD & ALERTES (SELECTION RECHERCHABLE POUR ÉTABLISSEMENT)
+# 3. TABLEAU DE BORD & ALERTES
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -584,8 +585,9 @@ elif menu == "3. Tableau de Bord & Alertes":
                                     jours_restants,
                                     row["date_fin"],
                                 )
+                                # LIBELLÉ DU BOUTON MODIFIÉ COMME DEMANDÉ
                                 st.link_button(
-                                    "📧 Recommander (Outlook)",
+                                    "📧 Contacter l'établissement de santé",
                                     mailto_url,
                                     use_container_width=True,
                                 )
@@ -601,7 +603,6 @@ elif menu == "3. Tableau de Bord & Alertes":
                             "Nom du Patient", value=row["patient"]
                         )
 
-                        # LISTE DYNAMIQUE DES ÉTABLISSEMENTS POUR LA RECHERCHE (SELECTBOX)
                         liste_hopitaux = sorted(
                             list(
                                 set(
@@ -612,15 +613,12 @@ elif menu == "3. Tableau de Bord & Alertes":
                                 )
                             )
                         )
-
-                        # Si l'hôpital actuel n'est pas encore dans l'annuaire, on l'ajoute provisoirement à la liste de choix
                         if (
                             row["hopital"]
                             and row["hopital"] not in liste_hopitaux
                         ):
                             liste_hopitaux.insert(0, row["hopital"])
 
-                        # Recherche dynamique par saisie dans la selectbox
                         index_defaut = (
                             liste_hopitaux.index(row["hopital"])
                             if row["hopital"] in liste_hopitaux
@@ -659,6 +657,7 @@ elif menu == "3. Tableau de Bord & Alertes":
                             use_container_width=True,
                         )
 
+                        # À L'ENREGISTREMENT: MISE À JOUR ET RECHARGEMENT PROPRE POUR FERMER LE PANNEAU
                         if btn_sauver_edit:
                             st.session_state.ordonnances[idx]["patient"] = (
                                 mod_patient
@@ -686,7 +685,7 @@ elif menu == "3. Tableau de Bord & Alertes":
                             )
 
                             sauvegarder_ordonnances()
-                            st.success("Modifications enregistrées !")
+                            st.toast("Modifications enregistrées avec succès !")
                             st.rerun()
 
 # -----------------------------------------------------------------------------
@@ -813,3 +812,148 @@ elif menu == "4. Gestion Établissements & Dossiers":
                             if st.button("🗑️ Supprimer", key=f"del_pat_{idx}"):
                                 supprimer_ligne(idx)
                                 st.rerun()
+
+# -----------------------------------------------------------------------------
+# 5. PLANNING ANNUEL ERGONOMIQUE
+# -----------------------------------------------------------------------------
+elif menu == "5. Planning Annuel des Traitements":
+    st.header("📅 Planning Annuel & Suivi des Durées de Traitements")
+
+    if not st.session_state.ordonnances:
+        st.info("Aucune ordonnance enregistrée pour afficher le planning.")
+    else:
+        df_ord = pd.DataFrame(st.session_state.ordonnances)
+
+        # Filtres du planning
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            patients_filter = ["Tous les patients"] + sorted(
+                list(df_ord["patient"].unique())
+            )
+            patient_choisi = st.selectbox(
+                "Filtrer par patient :", patients_filter
+            )
+
+        with col_f2:
+            annee_courante = datetime.now().year
+            annee_choisie = st.number_input(
+                "Année de visualisation :",
+                value=annee_courante,
+                min_value=2020,
+                max_value=2035,
+            )
+
+        # Filtrage des données
+        df_planning = df_ord.copy()
+        if patient_choisi != "Tous les patients":
+            df_planning = df_planning[df_planning["patient"] == patient_choisi]
+
+        df_planning = df_planning[df_planning["statut"] == "VALIDÉE"]
+
+        if df_planning.empty:
+            st.warning("Aucun traitement validé trouvé pour ces critères.")
+        else:
+            # Construction de la vue Gantt / Frise Chronologique
+            st.subheader(
+                f"📊 Couverture des Traitements - Année {annee_choisie}"
+            )
+
+            # Préparation des données pour le diagramme
+            chart_data = []
+            for _, r in df_planning.iterrows():
+                chart_data.append(
+                    {
+                        "Patient & Traitement": f"{r['patient']} — {r['molecule']}",
+                        "Début": pd.to_datetime(r["date_debut"]),
+                        "Fin": pd.to_datetime(r["date_fin"]),
+                        "Établissement": r["hopital"],
+                        "Durée (jours)": r["duree"],
+                    }
+                )
+
+            df_chart = pd.DataFrame(chart_data)
+
+            # Diagramme graphique Streamlit/Altair pour la frise
+            import altair as alt
+
+            chart = (
+                alt.Chart(df_chart)
+                .mark_bar(cornerRadius=5, height=20)
+                .encode(
+                    x=alt.X(
+                        "Début:T",
+                        title="Période",
+                        scale=alt.Scale(
+                            domain=[
+                                f"{annee_choisie}-01-01",
+                                f"{annee_choisie}-12-31",
+                            ]
+                        ),
+                    ),
+                    x2="Fin:T",
+                    y=alt.Y(
+                        "Patient & Traitement:N",
+                        title="Traitements Enregistrés",
+                    ),
+                    color=alt.Color(
+                        "Établissement:N", legend=alt.Legend(title="Établissement")
+                    ),
+                    tooltip=[
+                        "Patient & Traitement",
+                        "Début",
+                        "Fin",
+                        "Durée (jours)",
+                        "Établissement",
+                    ],
+                )
+                .properties(width="container", height=100 + (len(df_chart) * 35))
+                .interactive()
+            )
+
+            st.altair_chart(chart, use_container_width=True)
+
+            # Vue synthétique sous forme de tableau mensuel ergonomique
+            st.subheader("🗓️ Vue Synthétique Mensuelle")
+
+            mois_labels = [
+                "Jan",
+                "Fév",
+                "Mar",
+                "Avr",
+                "Mai",
+                "Juin",
+                "Juil",
+                "Aoû",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Déc",
+            ]
+            lignes_synth = []
+
+            for _, row in df_planning.iterrows():
+                m_row = {
+                    "Patient": row["patient"],
+                    "Médicament": row["molecule"],
+                    "Durée": f"{row['duree']}j",
+                }
+                d_start = row["date_debut"]
+                d_end = row["date_fin"]
+
+                for m_idx in range(1, 13):
+                    m_start = datetime(annee_choisie, m_idx, 1).date()
+                    if m_idx == 12:
+                        m_next = datetime(annee_choisie + 1, 1, 1).date()
+                    else:
+                        m_next = datetime(annee_choisie, m_idx + 1, 1).date()
+
+                    # Vérifie si la période de traitement chevauche le mois
+                    if d_start < m_next and d_end >= m_start:
+                        m_row[mois_labels[m_idx - 1]] = "🟩"
+                    else:
+                        m_row[mois_labels[m_idx - 1]] = "⬜"
+
+                lignes_synth.append(m_row)
+
+            df_grid = pd.DataFrame(lignes_synth)
+            st.dataframe(df_grid, use_container_width=True, hide_index=True)
