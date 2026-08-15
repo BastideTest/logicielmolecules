@@ -24,8 +24,8 @@ def extraire_texte(fichier_image):
     return texte, img
 
 
-def analyser_traitements(texte):
-    """Détecte et détaille chaque molécule : Nom, Posologie, Fréquence et Prise."""
+def analyser_traitements(texte, date_debut_defaut):
+    """Détecte chaque médicament et lui attribue SA PROPRE durée, fréquence, prise et date de fin."""
     traitements = []
     lignes = [l.strip() for l in texte.split("\n") if l.strip()]
 
@@ -40,10 +40,11 @@ def analyser_traitements(texte):
             nom_mol = f"{m.group(1)} {m.group(2)}"
             frequence = "1x / jour"
             prise = "Pendant le repas"
+            duree_jours = 30  # Valeur par défaut : 1 mois
 
-            # Analyse du contexte sur la ligne suivante pour la prise / fréquence
+            # Analyse du contexte sur la ligne et les lignes suivantes
             contexte = (
-                (ligne + " " + lignes[i + 1])
+                (ligne + " " + " ".join(lignes[i + 1 : i + 3]))
                 if i + 1 < len(lignes)
                 else ligne
             ).lower()
@@ -61,9 +62,37 @@ def analyser_traitements(texte):
                 prise = " + ".join(moments)
                 frequence = f"{len(moments)}x / jour"
 
+            # Détection de la durée SPÉCIFIQUE à ce médicament
+            if "1 mois" in contexte or "un mois" in contexte:
+                duree_jours = 30
+            elif "2 mois" in contexte:
+                duree_jours = 60
+            elif "3 mois" in contexte:
+                duree_jours = 90
+            else:
+                m_duree = re.search(r"(\d+)\s*(?:jours|j)", contexte)
+                if m_duree:
+                    duree_jours = int(m_duree.group(1))
+
             traitements.append(
-                {"molecule": nom_mol, "frequence": frequence, "prise": prise}
+                {
+                    "molecule": nom_mol,
+                    "frequence": frequence,
+                    "prise": prise,
+                    "duree": duree_jours,
+                }
             )
+
+    # Si aucun médicament n'est détecté par Regex, créer un élément par défaut
+    if not traitements:
+        traitements.append(
+            {
+                "molecule": "",
+                "frequence": "1x / jour",
+                "prise": "Soir",
+                "duree": 30,
+            }
+        )
 
     return traitements
 
@@ -73,9 +102,8 @@ def parser_texte(texte):
     donnees = {
         "patient": "",
         "hopital": "",
-        "traitements": [],
         "date_debut": datetime.today().date(),
-        "duree": 30,  # Default 30 jours (1 mois)
+        "traitements": [],
     }
 
     # 1. Médecin / Établissement
@@ -96,21 +124,8 @@ def parser_texte(texte):
         if "Docteur" not in nom and "Dr" not in nom:
             donnees["patient"] = nom
 
-    # 3. Durée du traitement
-    texte_lower = texte.lower()
-    if "1 mois" in texte_lower or "un mois" in texte_lower:
-        donnees["duree"] = 30
-    elif "2 mois" in texte_lower:
-        donnees["duree"] = 60
-    elif "3 mois" in texte_lower:
-        donnees["duree"] = 90
-    else:
-        m_duree = re.search(r"pendant\s+(\d+)\s*jours", texte_lower)
-        if m_duree:
-            donnees["duree"] = int(m_duree.group(1))
-
-    # 4. Extraction détaillée des molécules
-    donnees["traitements"] = analyser_traitements(texte)
+    # 3. Extraction individualisée des médicaments
+    donnees["traitements"] = analyser_traitements(texte, donnees["date_debut"])
 
     return donnees
 
@@ -163,83 +178,88 @@ elif menu == "2. Validation Pro":
             )
 
         with col_form:
-            st.subheader("Champs extraits")
+            st.subheader("Informations Générales")
             d = st.session_state["temp_ordonnance"]["data"]
 
             patient = st.text_input("Nom du Patient", value=d["patient"])
             hopital = st.text_input("Hôpital / Praticien", value=d["hopital"])
-
-            # Calcul dynamique exact de la Date de fin
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                date_debut = st.date_input(
-                    "Date de début", value=d["date_debut"]
-                )
-            with col_d2:
-                duree = st.number_input(
-                    "Durée (jours)", value=int(d["duree"]), min_value=1
-                )
-
-            date_fin_calculee = date_debut + timedelta(days=int(duree))
-            st.success(
-                f"📅 **Date de fin calculée : {date_fin_calculee.strftime('%d/%m/%Y')}**"
-            )
+            date_debut = st.date_input("Date de début de traitement", value=d["date_debut"])
 
             st.divider()
-            st.subheader("Molécules & Posologies")
+            st.subheader("Détail par Médicament")
 
             traitements_saisis = []
-            traitements_source = (
-                d["traitements"]
-                if d["traitements"]
-                else [{"molecule": "", "frequence": "1x / jour", "prise": "Soir"}]
-            )
 
-            # Affichage dynamique des molécules (1 ou plusieurs)
-            for idx, trait in enumerate(traitements_source):
-                st.markdown(f"**Médicament n°{idx+1}**")
-                c1, c2, c3 = st.columns([2, 1, 1])
-
+            # Génération des champs INDIVIDUELS pour chaque médicament
+            for idx, trait in enumerate(d["traitements"]):
+                st.markdown(f"### 💊 Médicament n°{idx+1}")
+                
+                c1, c2 = st.columns([2, 1])
                 with c1:
                     mol = st.text_input(
-                        f"Molécule & Dosage",
+                        "Molécule & Dosage",
                         value=trait["molecule"],
                         key=f"mol_{idx}",
                     )
                 with c2:
-                    freq = st.text_input(
-                        f"Fréquence", value=trait["frequence"], key=f"freq_{idx}"
+                    duree = st.number_input(
+                        "Durée (jours)",
+                        value=int(trait["duree"]),
+                        min_value=1,
+                        key=f"duree_{idx}",
                     )
+
+                c3, c4 = st.columns([1, 1])
                 with c3:
+                    freq = st.text_input(
+                        "Fréquence",
+                        value=trait["frequence"],
+                        key=f"freq_{idx}",
+                    )
+                with c4:
                     prise = st.text_input(
-                        f"Moment de Prise",
+                        "Moment de Prise",
                         value=trait["prise"],
                         key=f"prise_{idx}",
                     )
 
-                traitements_saisis.append(
-                    {"molecule": mol, "frequence": freq, "prise": prise}
-                )
+                # Calcul dynamique individuel de la date de fin
+                date_fin_mol = date_debut + timedelta(days=int(duree))
+                st.info(f"📅 **Fin de ce traitement : {date_fin_mol.strftime('%d/%m/%Y')}**")
 
-            st.divider()
+                traitements_saisis.append(
+                    {
+                        "molecule": mol,
+                        "frequence": freq,
+                        "prise": prise,
+                        "duree": duree,
+                        "date_fin": date_fin_mol,
+                    }
+                )
+                st.markdown("---")
+
             col_val, col_rej = st.columns(2)
 
             with col_val:
                 if st.button("✅ Valider l'ordonnance", use_container_width=True):
-                    st.session_state.ordonnances.append(
-                        {
-                            "patient": patient,
-                            "hopital": hopital,
-                            "traitements": traitements_saisis,
-                            "date_debut": date_debut,
-                            "duree": duree,
-                            "date_fin": date_fin_calculee,
-                            "statut": "VALIDÉE",
-                            "motif_rejet": "",
-                        }
-                    )
+                    # Enregistre chaque médicament sous forme d'entrée individuelle pour un suivi précis
+                    for t in traitements_saisis:
+                        st.session_state.ordonnances.append(
+                            {
+                                "patient": patient,
+                                "hopital": hopital,
+                                "molecule": t["molecule"],
+                                "frequence": t["frequence"],
+                                "prise": t["prise"],
+                                "date_debut": date_debut,
+                                "duree": t["duree"],
+                                "date_fin": t["date_fin"],
+                                "statut": "VALIDÉE",
+                                "motif_rejet": "",
+                            }
+                        )
                     del st.session_state["temp_ordonnance"]
-                    st.success("Ordonnance enregistrée !")
+                    st.success("Toutes les molécules ont été enregistrées avec leurs échéances propres !")
                     st.rerun()
 
             with col_rej:
@@ -248,18 +268,21 @@ elif menu == "2. Validation Pro":
                     if not motif:
                         st.error("Saisissez un motif de rejet.")
                     else:
-                        st.session_state.ordonnances.append(
-                            {
-                                "patient": patient,
-                                "hopital": hopital,
-                                "traitements": traitements_saisis,
-                                "date_debut": date_debut,
-                                "duree": duree,
-                                "date_fin": date_fin_calculee,
-                                "statut": "REJETÉE",
-                                "motif_rejet": motif,
-                            }
-                        )
+                        for t in traitements_saisis:
+                            st.session_state.ordonnances.append(
+                                {
+                                    "patient": patient,
+                                    "hopital": hopital,
+                                    "molecule": t["molecule"],
+                                    "frequence": t["frequence"],
+                                    "prise": t["prise"],
+                                    "date_debut": date_debut,
+                                    "duree": t["duree"],
+                                    "date_fin": t["date_fin"],
+                                    "statut": "REJETÉE",
+                                    "motif_rejet": motif,
+                                }
+                            )
                         del st.session_state["temp_ordonnance"]
                         st.warning("Ordonnance rejetée.")
                         st.rerun()
@@ -268,10 +291,30 @@ elif menu == "2. Validation Pro":
 # 3. TABLEAU DE BORD
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
-    st.header("Suivi du renouvellement & Alertes")
+    st.header("Suivi du renouvellement & Alertes par Médicament")
 
     if not st.session_state.ordonnances:
         st.info("Aucune ordonnance enregistrée.")
     else:
         df = pd.DataFrame(st.session_state.ordonnances)
+        aujourdhui = datetime.today().date()
+
+        st.subheader("🚨 Alertes de renouvellement (Échéance < 3 jours)")
+        alertes = []
+
+        for idx, row in df.iterrows():
+            if row["statut"] == "VALIDÉE":
+                jours_restants = (row["date_fin"] - aujourdhui).days
+                if 0 <= jours_restants <= 3:
+                    alertes.append(
+                        f"⚠️ **{row['patient']}** : Recommander **{row['molecule']}** ({row['prise']}) avant le {row['date_fin'].strftime('%d/%m/%Y')} (Reste {jours_restants} j)."
+                    )
+
+        if alertes:
+            for alerte in alertes:
+                st.error(alerte)
+        else:
+            st.success("Aucun réapprovisionnement urgent requis aujourd'hui.")
+
+        st.subheader("Toutes les lignes de traitement")
         st.dataframe(df, use_container_width=True)
