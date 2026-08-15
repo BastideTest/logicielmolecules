@@ -3,6 +3,9 @@ import hashlib
 import json
 import os
 import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import pandas as pd
 from PIL import Image
 import pytesseract
@@ -16,8 +19,6 @@ st.set_page_config(
 )
 
 # --- CHEMIN DU FICHIER EN LOCAL / RÉSEAU ---
-# Utilise le dossier Public Documents pour un accès partagé sur la machine
-# Le dossier "bastide" sera créé automatiquement s'il n'existe pas.
 CHEMIN_RESEAU = r"C:\Users\Public\Documents\bastide\ordonnances_db.json"
 
 # --- COMPTES UTILISATEURS AUTORISÉS ---
@@ -25,8 +26,49 @@ COMPTES = {
     "Bastideadmin": hashlib.sha256("moleculesbastide".encode()).hexdigest(),
 }
 
+# --- CONFIGURATION SMTP POUR L'ENVOI DE MAILS ---
+# Remplacez par vos identifiants d'envoi d'établissement/entreprise
+SMTP_SERVER = "smtp.gmail.com"  # Ex: smtp.office365.com pour Outlook/Office365
+SMTP_PORT = 587
+SMTP_USER = "votre_email@domaine.com"
+SMTP_PASSWORD = "votre_mot_de_passe_app"
 
-# --- GESTION DU STOCKAGE ---
+
+# --- FONCTIONS SERVEUR ET SÉCURITÉ ---
+def envoyer_email_recommande(destinataire_email, nom_hopital, patient, molecule, jours_restants, date_fin):
+    """Envoie un mail automatique d'alerte pour renouvellement d'ordonnance."""
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = SMTP_USER
+        msg["To"] = destinataire_email
+        msg["Subject"] = f"URGENT : Renouvellement d'ordonnance - Patient : {patient}"
+
+        corps = f"""Bonjour,
+
+Nous vous contactons concernant le traitement du patient {patient}, suivi au sein de votre établissement ({nom_hopital}).
+
+Le traitement suivant arrive à échéance :
+- Traitement : {molecule}
+- Date de fin de traitement : {date_fin.strftime('%d/%m/%Y')}
+- Jours restants : {jours_restants} jour(s)
+
+Merci de bien vouloir nous faire parvenir la nouvelle ordonnance renouvelée dans les plus brefs délais afin d'éviter toute rupture de traitement.
+
+Cordialement,
+L'équipe médicale - Bastide
+"""
+        msg.attach(MIMEText(corps, "plain", "utf-8"))
+
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True, "Email envoyé avec succès !"
+    except Exception as e:
+        return False, f"Erreur lors de l'envoi de l'email : {e}"
+
+
 def charger_donnees_reseau():
     """Charge les données depuis le fichier JSON s'il existe."""
     if os.path.exists(CHEMIN_RESEAU):
@@ -63,7 +105,6 @@ def sauvegarder_donnees_reseau():
                 )
             donnees_a_sauver.append(item_copy)
 
-        # Création automatique du dossier bastide si absent
         dossier_parent = os.path.dirname(CHEMIN_RESEAU)
         if dossier_parent and not os.path.exists(dossier_parent):
             os.makedirs(dossier_parent, exist_ok=True)
@@ -406,7 +447,7 @@ elif menu == "2. Validation Pro":
                         st.rerun()
 
 # -----------------------------------------------------------------------------
-# 3. TABLEAU DE BORD
+# 3. TABLEAU DE BORD (AVEC OPTION ENVOI EMAIL)
 # -----------------------------------------------------------------------------
 elif menu == "3. Tableau de Bord & Alertes":
     st.header("Tableau de Bord & Échéances des Commandes")
@@ -427,18 +468,22 @@ elif menu == "3. Tableau de Bord & Alertes":
             if row["statut"] == "REJETÉE":
                 couleur_fond = "#f0f0f0"
                 badge = "⚪ REJETÉE"
+                alerte_urgente = False
             elif jours_restants <= 3:
                 couleur_fond = "#ffcccc"
                 badge = f"🔴 COMMANDE URGENTE ({jours_restants}j restants)"
+                alerte_urgente = True
             elif 4 <= jours_restants <= 7:
                 couleur_fond = "#ffe6cc"
                 badge = f"🟧 À PRÉVOIR ({jours_restants}j restants)"
+                alerte_urgente = True
             else:
                 couleur_fond = "#e6ffe6"
                 badge = f"🟩 EN COURS ({jours_restants}j restants)"
+                alerte_urgente = False
 
             with st.container():
-                col_info, col_del = st.columns([6, 1])
+                col_info, col_actions = st.columns([5, 2])
 
                 with col_info:
                     st.markdown(
@@ -453,10 +498,50 @@ elif menu == "3. Tableau de Bord & Alertes":
                         unsafe_allow_html=True,
                     )
 
-                with col_del:
-                    if st.button("🗑️ Supprimer", key=f"del_board_{idx}"):
-                        supprimer_ligne(idx)
-                        st.rerun()
+                with col_actions:
+                    col_btn_del, col_btn_email = st.columns([1, 1])
+
+                    with col_btn_del:
+                        if st.button("🗑️ Supprimer", key=f"del_board_{idx}"):
+                            supprimer_ligne(idx)
+                            st.rerun()
+
+                    # Déclencheur du pop-up d'envoi de mail si l'ordonnance est Rouge ou Orange
+                    with col_btn_email:
+                        if alerte_urgente:
+                            with st.popover("📧 Recommander"):
+                                st.write(
+                                    f"**Envoyer une alerte à {row['hopital']}**"
+                                )
+                                email_dest = st.text_input(
+                                    "Email de l'établissement :",
+                                    key=f"email_dest_{idx}",
+                                    placeholder="secretariat@hopital.fr",
+                                )
+
+                                if st.button(
+                                    "🚀 Envoyer l'email",
+                                    key=f"send_mail_btn_{idx}",
+                                ):
+                                    if not email_dest:
+                                        st.error(
+                                            "Veuillez saisir une adresse email."
+                                        )
+                                    else:
+                                        succes, msg = (
+                                            envoyer_email_recommande(
+                                                email_dest,
+                                                row["hopital"],
+                                                row["patient"],
+                                                row["molecule"],
+                                                jours_restants,
+                                                row["date_fin"],
+                                            )
+                                        )
+                                        if succes:
+                                            st.success(msg)
+                                        else:
+                                            st.error(msg)
 
 # -----------------------------------------------------------------------------
 # 4. DOSSIER PATIENT & HÔPITAL
