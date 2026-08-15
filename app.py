@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
 import hashlib
 import json
 import os
-from datetime import datetime, timedelta
+import re
 import pandas as pd
 from PIL import Image
 import pytesseract
@@ -9,19 +10,18 @@ import streamlit as st
 
 # --- CONFIGURATION PAGE ---
 st.set_page_config(
-    page_title="Gestionnaire d'Ordonnances - Sécurisé",
+    page_title="Gestionnaire d'Ordonnances - Bastide",
     page_icon="🔒",
     layout="wide",
 )
 
 # --- CONFIGURATION DU STOCKAGE RÉSEAU ---
+# Adaptez le chemin selon votre serveur (ex: r"\\192.168.1.100\Partage\ordonnances_db.json")
 CHEMIN_RESEAU = r"\\NOM_DU_SERVEUR\Partage\ordonnances_db.json"
 
-# --- COMPTES UTILISATEURS AUTORISÉS (Mots de passe hachés) ---
-# Astuce : Utilisez un mot de passe fort en production.
+# --- COMPTES UTILISATEURS AUTORISÉS ---
 COMPTES = {
-    "admin": hashlib.sha256("Admin123!".encode()).hexdigest(),
-    "medecin": hashlib.sha256("Sante2026*".encode()).hexdigest(),
+    "Bastideadmin": hashlib.sha256("moleculesbastide".encode()).hexdigest(),
 }
 
 
@@ -62,7 +62,10 @@ def sauvegarder_donnees_reseau():
                 )
             donnees_a_sauver.append(item_copy)
 
-        os.makedirs(os.path.dirname(CHEMIN_RESEAU), exist_ok=True)
+        dossier_parent = os.path.dirname(CHEMIN_RESEAU)
+        if dossier_parent and not os.path.exists(dossier_parent):
+            os.makedirs(dossier_parent, exist_ok=True)
+
         with open(CHEMIN_RESEAU, "w", encoding="utf-8") as f:
             json.dump(donnees_a_sauver, f, ensure_ascii=False, indent=4)
     except Exception as e:
@@ -89,7 +92,6 @@ def verifier_identifiants(utilisateur, mot_de_passe):
     if utilisateur in COMPTES and COMPTES[utilisateur] == hash_mp:
         st.session_state.authentifie = True
         st.session_state.utilisateur = utilisateur
-        # Chargement sécurisé des données au moment de la connexion
         st.session_state.ordonnances = charger_donnees_reseau()
         st.rerun()
     else:
@@ -105,7 +107,7 @@ def deconnexion():
 
 
 # -----------------------------------------------------------------------------
-# ECRAN DE LOGIN (Si non connecté)
+# ÉCRAN DE LOGIN
 # -----------------------------------------------------------------------------
 if not st.session_state.authentifie:
     st.title("🔒 Connexion au Système Médical")
@@ -123,13 +125,12 @@ if not st.session_state.authentifie:
             if submit_btn:
                 verifier_identifiants(user_input, pass_input)
 
-    st.stop()  # Empêche l'exécution du reste du code si l'utilisateur n'est pas authentifié
+    st.stop()
 
 # -----------------------------------------------------------------------------
-# APPLICATION PRINCIPALE (Si connecté)
+# APPLICATION PRINCIPALE
 # -----------------------------------------------------------------------------
 
-# Barre de déconnexion dans le menu latéral
 st.sidebar.write(f"👤 Connecté en tant que : **{st.session_state.utilisateur}**")
 if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
     deconnexion()
@@ -137,7 +138,6 @@ if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
 st.sidebar.divider()
 
 
-# --- FONCTIONS OCR & PARSER ---
 def extraire_texte(fichier_image):
     img = Image.open(fichier_image)
     texte = pytesseract.image_to_string(img, lang="fra")
@@ -239,7 +239,6 @@ def parser_texte(texte):
     return donnees
 
 
-# --- MENU DE NAVIGATION ---
 st.title("💊 Centre Médical - Suivi des Ordonnances")
 
 menu = st.sidebar.radio(
