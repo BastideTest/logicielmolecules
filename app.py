@@ -188,6 +188,8 @@ if "hopitaux_db" not in st.session_state:
     st.session_state.hopitaux_db = charger_hopitaux()
 if "ordonnances" not in st.session_state:
     st.session_state.ordonnances = charger_ordonnances()
+if "renouvellements_faits" not in st.session_state:
+    st.session_state.renouvellements_faits = {}
 
 st.sidebar.write(f"👤 Connecté en tant que : **{st.session_state.utilisateur}**")
 if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
@@ -353,7 +355,7 @@ elif menu == "2. Validation Pro":
             st.subheader("Informations Générales")
             d = st.session_state["temp_ordonnance"]["data"]
 
-            # --- SELECTION DU PATIENT (EXISTANT OU NOUVEAU) ---
+            # --- SELECTION DU PATIENT ---
             patients_existants = sorted(
                 list(
                     set([o["patient"] for o in st.session_state.ordonnances])
@@ -376,7 +378,7 @@ elif menu == "2. Validation Pro":
 
             st.markdown("---")
 
-            # --- SELECTION DE L'ÉTABLISSEMENT (EXISTANT OU NOUVEAU) ---
+            # --- SELECTION DE L'ÉTABLISSEMENT ---
             hopitaux_existants = sorted(
                 [h["nom"] for h in st.session_state.hopitaux_db]
             )
@@ -594,7 +596,6 @@ elif menu == "3. Tableau de Bord & Alertes":
                                 st.warning("⚠️ Email non renseigné")
 
                 # --- PANNEAU DE MODIFICATION DE L'ORDONNANCE ---
-                # On réinitialise l'état d'ouverture si st.rerun() a été appelé
                 is_expanded = st.session_state.get(f"expand_{idx}", False)
 
                 with st.expander(
@@ -606,7 +607,6 @@ elif menu == "3. Tableau de Bord & Alertes":
                             "Nom du Patient", value=row["patient"]
                         )
 
-                        # LISTE DYNAMIQUE DES ÉTABLISSEMENTS POUR LA RECHERCHE (SELECTBOX)
                         liste_hopitaux = sorted(
                             list(
                                 set(
@@ -819,19 +819,19 @@ elif menu == "4. Gestion Établissements & Dossiers":
                                 st.rerun()
 
 # -----------------------------------------------------------------------------
-# 5. PLANNING HEBDOMADAIRE AVEC DÉFILEMENT DE SEMAINE EN SEMAINE
+# 5. PLANNING HEBDOMADAIRE - DATES DE COMMANDES ET SUIVI CHECK
 # -----------------------------------------------------------------------------
 elif menu == "5. Planning Hebdomadaire":
-    st.header("📅 Planning Hebdomadaire des Traitements")
+    st.header("📦 Planning des Commandes à Effectuer (7 jours avant la fin)")
 
-    # Initialisation de la date de référence (lundi de la semaine en cours)
+    # Initialisation du lundi de référence
     if "date_ref_planning" not in st.session_state:
         aujourdhui = datetime.today().date()
         st.session_state.date_ref_planning = aujourdhui - timedelta(
             days=aujourdhui.weekday()
         )
 
-    # --- BARRE DE NAVIGATION DANS LE TEMPS ---
+    # Navigation de semaine en semaine
     c_prev, c_curr, c_next, c_reset = st.columns([1, 2, 1, 1])
 
     with c_prev:
@@ -858,14 +858,85 @@ elif menu == "5. Planning Hebdomadaire":
     with c_curr:
         st.markdown(
             f"<h4 style='text-align: center; color: #1E88E5;'>"
-            f"Du {lundi_semaine.strftime('%d/%m/%Y')} au {dimanche_semaine.strftime('%d/%m/%Y')}"
+            f"Semaine du {lundi_semaine.strftime('%d/%m/%Y')} au {dimanche_semaine.strftime('%d/%m/%Y')}"
             f"</h4>",
             unsafe_allow_html=True,
         )
 
     st.divider()
 
-    # --- FILTRE FACULTATIF PAR PATIENT ---
+    # Dictionnaire des e-mails des hôpitaux
+    map_hopitaux_email = {
+        h["nom"]: h.get("email", "") for h in st.session_state.hopitaux_db
+    }
+
+    # Modale 1 : Demande de renouvellement par Email
+    @st.dialog("📩 Fiche de renouvellement par Email")
+    def ouvrir_dialogue_renouvellement(o, jours_restants):
+        st.markdown(f"### Patient : **{o['patient']}**")
+        st.write(f"**Établissement / Praticien :** {o['hopital']}")
+        st.write(f"**Traitement à renouveler :** {o['molecule']}")
+        st.write(
+            f"**Date de fin de traitement :** {o['date_fin'].strftime('%d/%m/%Y')}"
+        )
+        st.write(f"**Jours restants :** {jours_restants} jour(s)")
+
+        email_dest = map_hopitaux_email.get(o["hopital"], "")
+
+        st.divider()
+        if email_dest:
+            st.success(f"📧 Adresse e-mail trouvée : `{email_dest}`")
+            mailto_url = generer_lien_mailto(
+                email_dest,
+                o["hopital"],
+                o["patient"],
+                o["molecule"],
+                jours_restants,
+                o["date_fin"],
+            )
+            st.link_button(
+                "🚀 Ouvrir Outlook / Mail pour envoyer",
+                mailto_url,
+                use_container_width=True,
+            )
+        else:
+            st.error(
+                "⚠️ Aucune adresse e-mail renseignée pour cet établissement dans l'annuaire."
+            )
+            st.info(
+                "Rendez-vous dans le menu **'4. Gestion Établissements'** pour ajouter son e-mail."
+            )
+
+    # Modale 2 : Dépôt du fichier de reconduction
+    @st.dialog("📁 Reconduction Ordonnance - Dépôt de fichier")
+    def ouvrir_dialogue_reconduction(o):
+        st.markdown(f"### Reconduction pour : **{o['patient']}**")
+        st.write(f"**Traitement :** {o['molecule']}")
+        st.write(f"**Établissement :** {o['hopital']}")
+
+        st.divider()
+        fichier_nouveau = st.file_uploader(
+            "Déposez la nouvelle ordonnance scannée (PNG, JPG)",
+            type=["png", "jpg", "jpeg"],
+            key=f"file_reconduction_{o['patient']}_{o['molecule']}",
+        )
+
+        if fichier_nouveau is not None:
+            texte_extrait, img = extraire_texte(fichier_nouveau)
+            donnees = parser_texte(texte_extrait)
+            donnees["patient"] = o["patient"]
+            donnees["hopital"] = o["hopital"]
+
+            st.session_state["temp_ordonnance"] = {
+                "image": fichier_nouveau,
+                "data": donnees,
+            }
+            st.success(
+                "Nouvelle ordonnance chargée avec succès !"
+            )
+            st.info("Rendez-vous dans le menu **'2. Validation Pro'** pour valider la reconduction.")
+
+    # Filtre patient
     patients_dispo = ["Tous les patients"] + sorted(
         list(set([o["patient"] for o in st.session_state.ordonnances]))
     )
@@ -873,20 +944,27 @@ elif menu == "5. Planning Hebdomadaire":
         "🔎 Filtrer par patient :", patients_dispo
     )
 
-    ordonnances_filtrees = [
+    ordonnances_valid = [
         o for o in st.session_state.ordonnances if o["statut"] == "VALIDÉE"
     ]
     if filtre_patient_plan != "Tous les patients":
-        ordonnances_filtrees = [
+        ordonnances_valid = [
             o
-            for o in ordonnances_filtrees
+            for o in ordonnances_valid
             if o["patient"] == filtre_patient_plan
         ]
 
-    # --- AFFICHAGE PAR GRILLE HEBDOMADAIRE (7 COLONNES) ---
-    jours_semaine = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+    # Grille 7 jours
+    jours_semaine = [
+        "Lundi",
+        "Mardi",
+        "Mercredi",
+        "Jeudi",
+        "Vendredi",
+        "Samedi",
+        "Dimanche",
+    ]
     cols_jours = st.columns(7)
-
     aujourdhui_real = datetime.today().date()
 
     for i in range(7):
@@ -894,7 +972,6 @@ elif menu == "5. Planning Hebdomadaire":
         nom_jour = jours_semaine[i]
 
         with cols_jours[i]:
-            # Mise en valeur du jour actuel
             style_entete = (
                 "background-color: #1E88E5; color: white;"
                 if jour_date == aujourdhui_real
@@ -910,32 +987,70 @@ elif menu == "5. Planning Hebdomadaire":
                 unsafe_allow_html=True,
             )
 
-            # Recherche des traitements actifs ce jour-là
-            traitements_jour = []
-            for o in ordonnances_filtrees:
-                if o["date_debut"] <= jour_date <= o["date_fin"]:
-                    traitements_jour.append(o)
+            # Identification des commandes dues ce jour-là (date de fin - 7 jours)
+            commandes_du_jour = []
+            for o in ordonnances_valid:
+                date_commande = o["date_fin"] - timedelta(days=7)
+                if date_commande == jour_date:
+                    commandes_du_jour.append(o)
 
-            if not traitements_jour:
-                st.caption("<em>Aucun traitement</em>", unsafe_allow_html=True)
+            if not commandes_du_jour:
+                st.caption("<em>Aucune commande</em>", unsafe_allow_html=True)
             else:
-                for t in traitements_jour:
-                    j_restants = (t["date_fin"] - jour_date).days
-                    if j_restants <= 3:
-                        c_badge = "#ff4d4d"
-                    elif j_restants <= 7:
-                        c_badge = "#ffa500"
-                    else:
-                        c_badge = "#28a745"
+                for idx_c, o in enumerate(commandes_du_jour):
+                    key_cmd = f"cmd_{o['patient']}_{o['molecule']}_{o['date_fin'].strftime('%Y%m%d')}"
+                    jours_restants = (o["date_fin"] - aujourdhui_real).days
 
-                    st.markdown(
-                        f"""
-                        <div style="border-left: 4px solid {c_badge}; background-color: #ffffff; padding: 6px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 8px; font-size: 12px;">
-                            <strong>👤 {t['patient']}</strong><br>
-                            💊 {t['molecule']}<br>
-                            ⏱️ {t['prise']}<br>
-                            <small style="color: #666;">Fin: {t['date_fin'].strftime('%d/%m')}</small>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    # 1. BOUTON RENOUVELLEMENT (ouvre la fiche mail)
+                    if st.button(
+                        "📩 Renouveler",
+                        key=f"btn_renouv_{key_cmd}_{i}",
+                        use_container_width=True,
+                    ):
+                        ouvrir_dialogue_renouvellement(o, jours_restants)
+
+                    # 2. CASE À COCHER : Demande de renouvellement effectuée
+                    est_fait = st.session_state.renouvellements_faits.get(
+                        key_cmd, False
                     )
+                    coché = st.checkbox(
+                        "Demande de renouvellement effectuée",
+                        value=est_fait,
+                        key=f"chk_renouv_{key_cmd}_{i}",
+                    )
+
+                    st.session_state.renouvellements_faits[key_cmd] = coché
+
+                    # 3. BOUTON RECONDUCTION ORDONNANCE (ouvre le dépôt de fichier)
+                    if st.button(
+                        "📁 Reconduction ordonnance",
+                        key=f"btn_reconduct_{key_cmd}_{i}",
+                        use_container_width=True,
+                    ):
+                        ouvrir_dialogue_reconduction(o)
+
+                    # Visualisation du statut
+                    if coché:
+                        st.markdown(
+                            f"""
+                            <div style="border-left: 4px solid #888; background-color: #e8e8e8; padding: 6px; border-radius: 4px; font-size: 11px; text-decoration: line-through; color: #666;">
+                                <strong>✔️ {o['patient']}</strong><br>
+                                💊 {o['molecule']}<br>
+                                📅 Fin: {o['date_fin'].strftime('%d/%m')}
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            f"""
+                            <div style="border-left: 4px solid #ff4d4d; background-color: #fff0f0; padding: 6px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 11px;">
+                                <strong>🛒 COMMANDER</strong><br>
+                                👤 <strong>{o['patient']}</strong><br>
+                                💊 {o['molecule']}<br>
+                                <small style="color: #d9534f;">Fin tt: {o['date_fin'].strftime('%d/%m')}</small>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown("<br>", unsafe_allow_html=True)
